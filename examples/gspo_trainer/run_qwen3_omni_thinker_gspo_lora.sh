@@ -17,12 +17,18 @@
 # =============================================================================
 set -x
 
+# ─── NCCL ────────────────────────────────────────────────────────────────
+# IB/RDMA libraries are installed on this machine but the IB transport
+# crashes in ncclNetInit() (SIGSEGV) after the driver 580 upgrade.
+# Single-node H100s use NVLink, so IB is not needed.
+export NCCL_IB_DISABLE=1
+
 # ─── Model ───────────────────────────────────────────────────────────────
 # Qwen3-Omni-30B-A3B is an MoE model (30B total, 3B active per token).
 # The actor loads the FULL model via transformers (Thinker+Talker+Code2Wav)
 # but LoRA only targets Thinker layers, so Talker/Code2Wav are frozen.
-MODEL_PATH=${MODEL_PATH:-"Qwen/Qwen3-Omni-30B-A3B-Instruct"}
-# MODEL_PATH=/home/qa4/.cache/huggingface/hub/Qwen3-Omni-MoE-tiny
+# MODEL_PATH=${MODEL_PATH:-"Qwen/Qwen3-Omni-30B-A3B-Instruct"}
+MODEL_PATH=/home/qa4/.cache/huggingface/hub/Qwen3-Omni-MoE-tiny
 # ─── Data ────────────────────────────────────────────────────────────────
 # Start with GSM8K (text-only math) for simplest e2e validation.
 # Switch to AVQA later for multimodal (audio+image) training.
@@ -78,7 +84,6 @@ python3 -m verl_omni.trainer.omni.main_ppo \
     data.max_response_length=4096 \
     data.filter_overlong_prompts=True \
     data.truncation='left' \
-    # ++data.apply_chat_template_kwargs.enable_thinking=False \
     \
     actor_rollout_ref.model.path="${MODEL_PATH}" \
     +actor_rollout_ref.model.override_config.attn_implementation=sdpa \
