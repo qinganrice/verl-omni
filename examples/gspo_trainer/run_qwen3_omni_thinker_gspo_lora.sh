@@ -23,12 +23,18 @@ set -x
 # Single-node H100s use NVLink, so IB is not needed.
 export NCCL_IB_DISABLE=1
 
+# ─── Triton JIT compiler headers ─────────────────────────────────────────
+# conda GCC's sysroot omits /usr/include, so the multiarch Python header
+# <x86_64-linux-gnu/python3.12/pyconfig.h> is not found when Triton
+# JIT-compiles kernels in vLLM worker subprocesses.
+export CPATH=/usr/include${CPATH:+:$CPATH}
+
 # ─── Model ───────────────────────────────────────────────────────────────
 # Qwen3-Omni-30B-A3B is an MoE model (30B total, 3B active per token).
 # The actor loads the FULL model via transformers (Thinker+Talker+Code2Wav)
 # but LoRA only targets Thinker layers, so Talker/Code2Wav are frozen.
-# MODEL_PATH=${MODEL_PATH:-"Qwen/Qwen3-Omni-30B-A3B-Instruct"}
-MODEL_PATH=/home/qa4/.cache/huggingface/hub/Qwen3-Omni-MoE-tiny
+MODEL_PATH=${MODEL_PATH:-"Qwen/Qwen3-Omni-30B-A3B-Instruct"}
+# MODEL_PATH=/home/qa4/.cache/huggingface/hub/Qwen3-Omni-MoE-tiny
 # ─── Data ────────────────────────────────────────────────────────────────
 # Start with GSM8K (text-only math) for simplest e2e validation.
 # Switch to AVQA later for multimodal (audio+image) training.
@@ -153,7 +159,7 @@ python3 -m verl_omni.trainer.omni.main_ppo \
     trainer.n_gpus_per_node=4 \
     trainer.nnodes=1 \
     trainer.save_freq=20 \
-    trainer.test_freq=5 \
+    trainer.test_freq=50 \
     trainer.total_epochs=5 \
     "$@"
 

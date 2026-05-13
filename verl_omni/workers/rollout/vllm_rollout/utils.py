@@ -68,21 +68,18 @@ class vLLMOmniColocateWorkerExtension(CustomPipelineWorkerExtension):
 
     def _update_weights(self, weights: list[tuple[str, torch.Tensor]], peft_config: dict, base_sync_done: bool):
         if peft_config and base_sync_done:
-            # Actor trains the full model (Qwen3OmniMoeForConditionalGeneration)
-            # where LoRA params have paths like "...thinker.model.layers.0...".
-            # The rollout engine loads the thinker-only model which expects
-            # "...model.layers.0...".  Strip the "thinker.model." prefix so
-            # names match the thinker-only model.
-            weights = {
-                name.replace(".thinker.model.", ".").replace("thinker.model.", "model."): tensor
-                for name, tensor in weights
-            }
+            # Pass LoRA tensors as-is. The actor trains the full model
+            # (Qwen3OmniMoeForConditionalGeneration) so weight names contain
+            # "thinker.model." prefixes. parse_fine_tuned_lora_name applies
+            # the thinker-only model's hf_to_vllm_mapper which converts
+            # "thinker.model." → "language_model.model." correctly. Stripping
+            # the prefix here would break that mapping.
             lora_request = OmniTensorLoRARequest(
                 lora_name=VLLM_LORA_NAME,
                 lora_int_id=VLLM_LORA_INT_ID,
                 lora_path=VLLM_LORA_PATH,
                 peft_config=peft_config,
-                lora_tensors=weights,
+                lora_tensors=dict(weights),
             )
             self.add_lora(lora_request)
             logger.info(f"vLLM-Omni load weights, loaded_params: {len(weights)}")
@@ -92,9 +89,9 @@ class vLLMOmniColocateWorkerExtension(CustomPipelineWorkerExtension):
 
     def _get_zmq_handle(self) -> str:
         """Get ZMQ handle for communication.
-        Uses replica_rank + local_rank to form handle so it matches the sender side
-        regardless of CUDA_VISIBLE_DEVICES differences, and avoids collisions
-        when multiple replicas share the same node.
+        Must match ServerAdapter.zmq_handle (vllm_rollout.py) which includes job_id.
+        VERL_RAY_JOB_ID is set by vllm_async_server.py before worker subprocesses are spawned.
         """
+        job_id = os.environ.get("VERL_RAY_JOB_ID", "0")
         replica_rank = os.environ.get("VERL_REPLICA_RANK", "0")
-        return f"ipc:///tmp/rl-colocate-zmq-replica-{replica_rank}-rank-{self.local_rank}.sock"
+        return f"ipc:///tmp/rl-colocate-zmq-{job_id}-replica-{replica_rank}-rank-{self.local_rank}.sock"
