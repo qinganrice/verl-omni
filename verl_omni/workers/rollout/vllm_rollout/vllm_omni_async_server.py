@@ -13,6 +13,8 @@
 # limitations under the License.
 import argparse
 import logging
+import os
+import socket
 from dataclasses import asdict
 from typing import Any, Optional, Union
 
@@ -47,6 +49,12 @@ from verl_omni.workers.rollout.replica import DiffusionOutput
 
 logger = logging.getLogger(__file__)
 logger.setLevel(logging.INFO)
+
+
+def _get_free_loopback_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
 
 
 class vLLMOmniHttpServer(vLLMHttpServer):
@@ -133,6 +141,10 @@ class vLLMOmniHttpServer(vLLMHttpServer):
                 engine_args["enable_dummy_pipeline"] = True
                 engine_args["custom_pipeline_args"] = {"pipeline_class": pipeline_path}
 
+        os.environ["MASTER_ADDR"] = "127.0.0.1"
+        os.environ["MASTER_PORT"] = str(_get_free_loopback_port())
+        logger.info("Using MASTER_PORT=%s for vLLM-Omni diffusion workers", os.environ["MASTER_PORT"])
+
         engine_client = AsyncOmni(**engine_args)
         app = build_app(args)
         await omni_init_app_state(engine_client, app.state, args)
@@ -149,6 +161,20 @@ class vLLMOmniHttpServer(vLLMHttpServer):
 
     def _get_wake_up_tags(self) -> list[str]:
         return ["weights"]
+
+    async def _sleep_hybrid(self):
+        """Preserve non-actor pipeline weights during hybrid training sleep.
+
+        vLLM-Omni diffusion pipelines include components such as the text
+        encoder and VAE that are loaded by the rollout server, but are not part
+        of the trainable actor and therefore are not included in full-model
+        weight syncs. Use level-1 sleep so those weights are offloaded and can
+        be restored on wake-up instead of discarded by level-2 sleep.
+        """
+        # TODO (andy): use `sleep_level=2` in the future when the
+        #  trainer side incorporates the whole components of the model.
+        await self.engine.collective_rpc("sleep", kwargs={"level": 1})
+        await self.engine.reset_encoder_cache()
 
     # -----------------------------------------------------------------------
     # generate: dispatch based on mode

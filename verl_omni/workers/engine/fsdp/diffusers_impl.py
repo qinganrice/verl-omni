@@ -52,6 +52,7 @@ from verl.utils.fsdp_utils import (
     offload_fsdp_optimizer,
     replace_lora_wrapper,
 )
+from verl.utils.memory_utils import aggressive_empty_cache
 from verl.utils.model import convert_weight_keys
 from verl.utils.py_functional import append_to_dict, convert_to_regular_types
 from verl.workers.config import FSDPEngineConfig, FSDPOptimizerConfig
@@ -69,7 +70,7 @@ logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
 device_name = get_device_name()
 
 
-@EngineRegistry.register(model_type="diffusion_model", backend=["fsdp", "fsdp2"], device=["cuda"])
+@EngineRegistry.register(model_type="diffusion_model", backend=["fsdp", "fsdp2"], device=["cuda", "npu"])
 class DiffusersFSDPEngine(BaseEngine):
     """
     Concrete Diffusers Engine implementation using PyTorch FullyShardedDataParallel (FSDP).
@@ -612,11 +613,12 @@ class DiffusersFSDPEngine(BaseEngine):
         )
 
     def prepare_model_outputs(self, output, micro_batch: TensorDict):
-        log_prob, prev_sample_mean, std_dev_t = output
+        log_prob, prev_sample_mean, std_dev_t, sqrt_dt = output
         return {
             "log_probs": log_prob,
             "prev_sample_mean": prev_sample_mean,
             "std_dev_t": std_dev_t,
+            "sqrt_dt": sqrt_dt,
         }
 
     def forward_step(self, micro_batch: TensorDict, loss_function, forward_only, step):
@@ -652,6 +654,9 @@ class DiffusersFSDPEngine(BaseEngine):
 
             if micro_batch.get("ref_prev_sample_mean", None) is not None:
                 data["ref_prev_sample_mean"] = micro_batch["ref_prev_sample_mean"][:, step]
+
+            if micro_batch.get("old_prev_sample_mean", None) is not None:
+                data["old_prev_sample_mean"] = micro_batch["old_prev_sample_mean"][:, step]
 
             loss, metrics = loss_function(model_output=model_output, data=data, dp_group=self.get_data_parallel_group())
         else:
@@ -760,6 +765,8 @@ class DiffusersFSDPEngine(BaseEngine):
         torch.distributed.barrier()
         if self._is_offload_param:
             offload_fsdp_model_to_cpu(self.module)
+        gc.collect()
+        aggressive_empty_cache(force_sync=True)
 
     def load_checkpoint(
         self, local_path: str, hdfs_path: Optional[str] = None, del_local_after_load: int = True, **kwargs
