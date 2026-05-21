@@ -97,82 +97,32 @@ def _skip_diffusers_npu_empty_cache():
 
 
 class NPUColocateWorkerMixin:
-    """Mixin that overrides memory-pool, sleep, and wake_up on Ascend NPU.
+    """Mixin that *would* override memory-pool, sleep, and wake_up on Ascend NPU.
 
     Usage::
 
         class vLLMOmniColocateWorkerExtension(NPUColocateWorkerMixin, CustomPipelineWorkerExtension):
             ...
 
-    The mixin guards every method with ``_is_npu_platform()`` and falls back to
-    the super-class implementation on non-NPU hardware, so it is safe to use
-    unconditionally in a cross-platform codebase.
+    NOTE: vLLM's ``worker_base.init_worker`` asserts that extension methods do
+    NOT shadow methods already defined on the worker class. Since
+    ``_maybe_get_memory_pool_context``, ``sleep`` and ``wake_up`` are all
+    defined on ``vllm_omni.worker.base`` (and ``CustomPipelineWorkerExtension``
+    inherits from it), defining them on the mixin triggers ``AssertionError``
+    at worker init time even on CUDA where the overrides are intentional
+    no-ops (they fall back to ``super()``).
+
+    As a temporary workaround, the NPU-specific overrides are removed; the
+    mixin is kept as an empty class so that
+    ``vLLMOmniColocateWorkerExtension``'s class signature remains stable.
+    NPU users currently lose NPU-specific sleep/wake_up — see the original
+    implementation in git history if needed.
 
     # TODO (long): Once vLLM-Omni provides first-class NPU support in
-    ``CustomPipelineWorkerExtension``, this mixin can be removed and these
-    methods can be deleted from verl_omni entirely.
+    ``CustomPipelineWorkerExtension`` (or once vLLM relaxes the no-shadow
+    assertion), this mixin can either be removed entirely or have its
+    NPU-only overrides restored using a different mechanism (e.g. dynamic
+    method registration only when ``_is_npu_platform()`` is True).
     """
 
-    def _maybe_get_memory_pool_context(self, tag: str) -> AbstractContextManager:
-        if not _is_npu_platform():
-            return super()._maybe_get_memory_pool_context(tag)
-
-        if not self.od_config.enable_sleep_mode:
-            return nullcontext()
-
-        allocator = _get_npu_memory_allocator()
-        if tag == "weights":
-            assert allocator.get_current_usage() == 0, "Sleep mode can only be used for one instance per process."
-
-        @contextmanager
-        def npu_memory_pool_context():
-            with _skip_diffusers_npu_empty_cache(), allocator.use_memory_pool(tag=tag):
-                yield
-
-        return npu_memory_pool_context()
-
-    def sleep(self, level: int = 1) -> bool:
-        if not _is_npu_platform():
-            return super().sleep(level)
-
-        free_bytes_before_sleep = None
-        try:
-            free_bytes_before_sleep = torch.npu.mem_get_info()[0]
-        except Exception:
-            pass
-
-        if level == 2 and self.model_runner is not None:
-            model = self.model_runner.pipeline
-            self._sleep_saved_buffers = {name: buffer.cpu().clone() for name, buffer in model.named_buffers()}
-
-        allocator = _get_npu_memory_allocator()
-        allocator.sleep(offload_tags=("weights",) if level == 1 else tuple())
-
-        if free_bytes_before_sleep is not None:
-            try:
-                free_bytes_after_sleep, total = torch.npu.mem_get_info()
-                freed_bytes = free_bytes_after_sleep - free_bytes_before_sleep
-                used_bytes = total - free_bytes_after_sleep
-                logger.info(
-                    "Sleep mode freed %.2f GiB memory, %.2f GiB memory is still in use.",
-                    freed_bytes / GiB_bytes,
-                    used_bytes / GiB_bytes,
-                )
-            except Exception:
-                pass
-        return True
-
-    def wake_up(self, tags: list[str] | None = None) -> bool:
-        if not _is_npu_platform():
-            return super().wake_up(tags)
-
-        allocator = _get_npu_memory_allocator()
-        allocator.wake_up(tags=tags)
-
-        if len(self._sleep_saved_buffers) and self.model_runner is not None:
-            model = self.model_runner.pipeline
-            for name, buffer in model.named_buffers():
-                if name in self._sleep_saved_buffers:
-                    buffer.data.copy_(self._sleep_saved_buffers[name].data)
-            self._sleep_saved_buffers = {}
-        return True
+    pass
