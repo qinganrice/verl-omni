@@ -70,6 +70,34 @@ class vLLMOmniColocateWorkerExtension(NPUColocateWorkerMixin, CustomPipelineWork
 
     def _update_weights(self, weights: list[tuple[str, torch.Tensor]], peft_config: dict, base_sync_done: bool):
         if peft_config and base_sync_done:
+            # === DIAGNOSTIC DUMP: confirm what arrived at rollout side ===
+            # Compare with actor-side dump in verl/utils/fsdp_utils.py to
+            # detect tensors lost / renamed during IPC transfer.
+            try:
+                import re
+                from collections import defaultdict
+                names = [n for n, _ in weights]
+                per_expert = defaultdict(set)
+                non_expert = 0
+                for n in names:
+                    m = re.search(r"layers\.(\d+)\..*experts\.(\d+)\.(\w+?)_proj\.lora_([AB])", n)
+                    if m:
+                        per_expert[(m.group(1), m.group(2))].add((m.group(3), m.group(4)))
+                    else:
+                        non_expert += 1
+                need = {(p, ab) for p in ("gate", "up", "down") for ab in ("A", "B")}
+                incomplete = {k: sorted(need - v) for k, v in per_expert.items() if v != need}
+                logger.warning(
+                    "[lora rollout dump] total=%d non_expert=%d experts=%d incomplete=%d",
+                    len(names), non_expert, len(per_expert), len(incomplete),
+                )
+                if incomplete:
+                    logger.warning("[lora rollout dump] incomplete sample: %s",
+                                   list(incomplete.items())[:10])
+            except Exception as _e:
+                logger.warning("[lora rollout dump] skipped: %s", _e)
+            # === END DIAGNOSTIC ===
+
             # Pass LoRA tensors as-is. The actor trains the full model
             # (Qwen3OmniMoeForConditionalGeneration) so weight names contain
             # "thinker.model." prefixes. parse_fine_tuned_lora_name applies
