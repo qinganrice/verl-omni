@@ -153,7 +153,7 @@ python3 -m verl_omni.trainer.omni.main_ppo \
     \
     trainer.val_before_train=False \
     trainer.critic_warmup=0 \
-    trainer.logger='["console"]' \
+    trainer.logger='["console","wandb"]' \
     trainer.project_name='qwen3_omni_thinker_rl' \
     trainer.experiment_name='gspo_lora_gsm8k' \
     trainer.n_gpus_per_node=4 \
