@@ -62,11 +62,33 @@ class vLLMOmniColocateWorkerExtension(NPUColocateWorkerMixin, CustomPipelineWork
             device=self.device,
             use_shm=use_shm,
         )
-        receiver.receive_weights(
-            on_bucket_received=lambda weights: self._update_weights(
-                weights, peft_config=peft_config, base_sync_done=base_sync_done
+
+        # NOTE: vllm's add_lora -> _create_merged_loras_inplace -> pack_moe
+        # requires ALL per-expert (gate/up/down × A/B) LoRA tensors to be
+        # present at once. The bucketed transfer can split them across
+        # multiple buckets — calling add_lora per-bucket would fail with
+        # `assert w1_lora is not None` because expert E's down_proj.lora_B
+        # might land in bucket 2 while gate_proj.* arrive in bucket 1.
+        # For LoRA + MoE we must accumulate every bucket and call add_lora
+        # exactly ONCE on the full set. Non-LoRA weight loading (the else
+        # branch in _update_weights) does not have this constraint and
+        # streams per-bucket as before.
+        if peft_config and base_sync_done:
+            accumulated_weights: list[tuple[str, torch.Tensor]] = []
+
+            def _accumulate(weights: list[tuple[str, torch.Tensor]]) -> None:
+                accumulated_weights.extend(weights)
+
+            receiver.receive_weights(on_bucket_received=_accumulate)
+            self._update_weights(
+                accumulated_weights, peft_config=peft_config, base_sync_done=base_sync_done
             )
-        )
+        else:
+            receiver.receive_weights(
+                on_bucket_received=lambda weights: self._update_weights(
+                    weights, peft_config=peft_config, base_sync_done=base_sync_done
+                )
+            )
 
     def _update_weights(self, weights: list[tuple[str, torch.Tensor]], peft_config: dict, base_sync_done: bool):
         if peft_config and base_sync_done:
