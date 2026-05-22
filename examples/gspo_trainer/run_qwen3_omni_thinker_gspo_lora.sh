@@ -113,7 +113,7 @@ python3 -m verl_omni.trainer.omni.main_ppo \
     actor_rollout_ref.actor.entropy_coeff=0 \
     actor_rollout_ref.actor.strategy=fsdp \
     actor_rollout_ref.actor.fsdp_config.param_offload=False \
-    actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
+    actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
     actor_rollout_ref.actor.fsdp_config.model_dtype=bf16 \
     actor_rollout_ref.actor.fsdp_config.use_orig_params=True \
     actor_rollout_ref.actor.fsdp_config.wrap_policy.min_num_params=100000000 \
@@ -141,7 +141,7 @@ python3 -m verl_omni.trainer.omni.main_ppo \
     \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=4 \
     actor_rollout_ref.ref.strategy=fsdp \
-    actor_rollout_ref.ref.fsdp_config.param_offload=False \
+    actor_rollout_ref.ref.fsdp_config.param_offload=True \
     actor_rollout_ref.ref.fsdp_config.model_dtype=bf16 \
     actor_rollout_ref.ref.fsdp_config.use_orig_params=True \
     actor_rollout_ref.ref.fsdp_config.wrap_policy.min_num_params=100000000 \
