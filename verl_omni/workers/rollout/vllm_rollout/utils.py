@@ -80,9 +80,22 @@ class vLLMOmniColocateWorkerExtension(NPUColocateWorkerMixin, CustomPipelineWork
                 accumulated_weights.extend(weights)
 
             receiver.receive_weights(on_bucket_received=_accumulate)
-            self._update_weights(
-                accumulated_weights, peft_config=peft_config, base_sync_done=base_sync_done
-            )
+            try:
+                self._update_weights(
+                    accumulated_weights, peft_config=peft_config, base_sync_done=base_sync_done
+                )
+            finally:
+                # Free GPU memory held by the accumulated LoRA tensors before
+                # the rollout engine's subsequent wake_up tries to remap
+                # cumem-allocator pages. Without this, ~6 GiB of cloned
+                # bucket tensors stay on GPU until Python GC, and vllm's
+                # wake_up hits CUDA OOM at create_and_map.
+                accumulated_weights.clear()
+                del accumulated_weights
+                import gc as _gc
+
+                _gc.collect()
+                torch.cuda.empty_cache()
         else:
             receiver.receive_weights(
                 on_bucket_received=lambda weights: self._update_weights(
