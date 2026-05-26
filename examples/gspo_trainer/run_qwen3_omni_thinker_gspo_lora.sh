@@ -38,8 +38,10 @@ MODEL_PATH=${MODEL_PATH:-"Qwen/Qwen3-Omni-30B-A3B-Instruct"}
 # ─── Data ────────────────────────────────────────────────────────────────
 # Start with GSM8K (text-only math) for simplest e2e validation.
 # Switch to AVQA later for multimodal (audio+image) training.
-TRAIN_FILE=${TRAIN_FILE:-"$HOME/data/gsm8k/train.parquet"}
-VAL_FILE=${VAL_FILE:-"$HOME/data/gsm8k/test.parquet"}
+# TRAIN_FILE=${TRAIN_FILE:-"$HOME/data/gsm8k/train.parquet"}
+# VAL_FILE=${VAL_FILE:-"$HOME/data/gsm8k/test.parquet"}
+TRAIN_FILE=${TRAIN_FILE:-"$HOME/data/math/train.parquet"}
+VAL_FILE=${VAL_FILE:-"$HOME/data/math/test.parquet"}
 
 # ─── Algorithm ───────────────────────────────────────────────────────────
 # GSPO = GRPO advantage estimation + sequence-level policy loss.
@@ -87,7 +89,9 @@ python3 -m verl_omni.trainer.omni.main_ppo \
     data.val_files="${VAL_FILE}" \
     data.train_batch_size=${TRAIN_BATCH_SIZE} \
     data.max_prompt_length=1024 \
-    data.max_response_length=4096 \
+    data.max_response_length=8192 \
+    data.val_max_samples=1000 \
+    data.validation_shuffle=True \
     data.filter_overlong_prompts=True \
     data.truncation='left' \
     \
@@ -106,7 +110,7 @@ python3 -m verl_omni.trainer.omni.main_ppo \
     actor_rollout_ref.actor.optim.weight_decay=0.1 \
     actor_rollout_ref.actor.optim.clip_grad=1.0 \
     actor_rollout_ref.actor.ppo_mini_batch_size=8 \
-    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=4 \
+    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=2 \
     actor_rollout_ref.actor.use_kl_loss=True \
     actor_rollout_ref.actor.kl_loss_coef=0.001 \
     actor_rollout_ref.actor.kl_loss_type=low_var_kl \
@@ -155,11 +159,11 @@ python3 -m verl_omni.trainer.omni.main_ppo \
     trainer.critic_warmup=0 \
     trainer.logger='["console","wandb"]' \
     trainer.project_name='qwen3_omni_thinker_rl' \
-    trainer.experiment_name='gspo_lora_gsm8k' \
+    trainer.experiment_name='gspo_lora_math' \
     trainer.n_gpus_per_node=4 \
     trainer.nnodes=1 \
     trainer.save_freq=20 \
-    trainer.test_freq=50 \
+    trainer.test_freq=25 \
     trainer.total_epochs=5 \
     "$@"
 
