@@ -22,3 +22,6 @@ import verl_omni.pipelines  # noqa: E402, F401
 import verl_omni.reward_loop  # noqa: E402, F401
 import verl_omni.workers.engine  # noqa: E402, F401
 import verl_omni.workers.rollout  # noqa: E402, F401
+
+# Patch upstream verl: register vllm_omni rollout, Qwen3-Omni model class, etc.
+import verl_omni._upstream_patches  # noqa: E402, F401

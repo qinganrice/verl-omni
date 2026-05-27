@@ -35,12 +35,18 @@ from vllm_omni.diffusion.models.diffusers_adapter.pipeline_diffusers_adapter imp
     DiffusersAdapterPipeline,
 )
 from vllm_omni.diffusion.registry import initialize_model
-from vllm_omni.lora.request import LoRARequest as OmniLoRARequest
+from vllm_omni.lora.request import LoRARequest as OmniLoRARequest  # noqa: F401  (kept for re-export users)
+from verl.utils.vllm.utils import TensorLoRARequest
 
 
-class OmniTensorLoRARequest(OmniLoRARequest):
-    peft_config: dict = field(default=None)
-    lora_tensors: dict = field(default=None)
+class OmniTensorLoRARequest(TensorLoRARequest):
+    """Alias of verl's TensorLoRARequest.
+
+    Inheriting from TensorLoRARequest (instead of vllm-omni's re-exported
+    LoRARequest, which is the same underlying class) lets
+    ``isinstance(req, TensorLoRARequest)`` in vllm's LoRA loader pass for
+    verl-omni's request type without needing duck-typed detection upstream.
+    """
 
 
 class VLLMOmniHijack:
