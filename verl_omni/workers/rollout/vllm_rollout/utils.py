@@ -61,7 +61,10 @@ class vLLMOmniColocateWorkerExtension(*_platform_extension_bases()):
 
     def __new__(cls, **kwargs):
         set_death_signal()
+
+        # 1. patch for Lora
         VLLMOmniHijack.hijack()
+
         return super().__new__(cls)
 
     def update_weights_from_ipc(self, peft_config: dict = None, base_sync_done=False, use_shm: bool = False):
@@ -69,6 +72,7 @@ class vLLMOmniColocateWorkerExtension(*_platform_extension_bases()):
 
         from verl.workers.rollout.vllm_rollout.bucketed_weight_transfer import BucketedWeightReceiver
 
+        # In async mode, make sure the old lora is removed before adding the new one
         if peft_config and base_sync_done:
             self.remove_lora(VLLM_LORA_INT_ID)
 
@@ -120,6 +124,8 @@ class vLLMOmniColocateWorkerExtension(*_platform_extension_bases()):
                 lora_tensors=dict(weights),
             )
             self.add_lora(lora_request)
+            # Drop in-memory tensor ref so vLLM's active-LoRA registry doesn't pin the adapter on GPU.
+            lora_request.lora_tensors = None
             logger.info(f"vLLM-Omni load weights, loaded_params: {len(weights)}")
         else:
             logger.info("Loading standard weights (async)")

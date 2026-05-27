@@ -37,6 +37,7 @@ from vllm_omni.diffusion.models.diffusers_adapter.pipeline_diffusers_adapter imp
 from vllm_omni.diffusion.registry import initialize_model
 from vllm_omni.lora.request import LoRARequest as OmniLoRARequest  # noqa: F401  (kept for re-export users)
 from verl.utils.vllm.utils import TensorLoRARequest
+from verl.utils.vllm import VLLMHijack
 
 
 class OmniTensorLoRARequest(TensorLoRARequest):
@@ -49,11 +50,14 @@ class OmniTensorLoRARequest(TensorLoRARequest):
     """
 
 
-class VLLMOmniHijack:
+class VLLMOmniHijack(VLLMHijack):
     """Monkey-patches vllm-omni internals to support in-memory LoRA tensors."""
 
     @staticmethod
     def hijack():
+        # Apply verl's vLLM LoRA hijack first, then layer the diffusion-side patches on top.
+        VLLMHijack.hijack()
+
         def hijack__load_adapter(self, lora_request: OmniTensorLoRARequest) -> tuple[LoRAModel, PEFTHelper]:
             """
             based on vllm_omni.diffusion.lora.manager.DiffusionLoRAManager._load_adapter,
@@ -245,8 +249,3 @@ class VLLMOmniHijack:
         if not getattr(OmniDiffusionConfig, "_verl_omni_master_port_hijacked", False):
             do_hijack(OmniDiffusionConfig, "__post_init__", hijack_omni_diffusion_config_post_init)
             OmniDiffusionConfig._verl_omni_master_port_hijacked = True
-
-        # Patch the standard vLLM LoRA manager for AR rollout TensorLoRARequest detection.
-        from verl.utils.vllm import VLLMHijack
-
-        VLLMHijack.hijack()

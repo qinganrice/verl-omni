@@ -323,10 +323,10 @@ class vLLMOmniHttpServer(vLLMHttpServer):
         prompt_ids = normalize_token_ids(prompt_ids)
 
         max_possible_tokens = self.config.max_model_len - len(prompt_ids)
-        if max_possible_tokens < 0:
+        if max_possible_tokens <= 0:
             raise ValueError(
-                f"Prompt length ({len(prompt_ids)}) exceeds the model's maximum context length "
-                f"({self.config.max_model_len})."
+                f"Prompt length ({len(prompt_ids)}) meets or exceeds the model's maximum context length "
+                f"({self.config.max_model_len}), leaving no space for generation."
             )
 
         if "max_tokens" in sampling_params:
@@ -340,7 +340,11 @@ class vLLMOmniHttpServer(vLLMHttpServer):
             )
         max_tokens = max(0, min(max_tokens, max_possible_tokens))
 
-        sampling_params["logprobs"] = 0 if sampling_params.pop("logprobs", False) else None
+        # ``logprobs=0`` is a valid vLLM setting; preserve 0 and only fall back to None when missing/False.
+        logprobs = sampling_params.pop("logprobs", None)
+        sampling_params["logprobs"] = (
+            0 if (logprobs is True or (isinstance(logprobs, int) and logprobs is not False)) else None
+        )
         sampling_params.setdefault("repetition_penalty", self.config.get("repetition_penalty", 1.0))
         sampling_params = SamplingParams(max_tokens=max_tokens, **sampling_params)
 
@@ -376,10 +380,12 @@ class vLLMOmniHttpServer(vLLMHttpServer):
         final_res: Optional[OmniRequestOutput] = None
         async for output in generator:
             final_res = output
-        assert final_res is not None
+        if final_res is None:
+            raise RuntimeError("AR mode: vLLM-Omni engine yielded no output for the prompt.")
 
         req_output = final_res.request_output
-        assert req_output is not None, "AR mode expects request_output with token IDs"
+        if req_output is None:
+            raise RuntimeError("AR mode expects request_output with token IDs, but got None.")
 
         extra_fields = {"global_steps": self.global_steps}
         token_ids = req_output.outputs[0].token_ids
