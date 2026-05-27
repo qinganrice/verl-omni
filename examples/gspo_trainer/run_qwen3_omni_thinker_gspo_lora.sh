@@ -5,6 +5,7 @@ set -x
 
 export NCCL_IB_DISABLE=1
 export CPATH=/usr/include${CPATH:+:$CPATH}
+export RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO=0
 
 MODEL_PATH=${MODEL_PATH:-"Qwen/Qwen3-Omni-30B-A3B-Instruct"}
 TRAIN_FILE=${TRAIN_FILE:-"$HOME/data/math/train.parquet"}

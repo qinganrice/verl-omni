@@ -186,3 +186,38 @@ def _patch_hf_processor_for_qwen3_omni() -> None:
 
 
 _patch_hf_processor_for_qwen3_omni()
+
+
+# ---------------------------------------------------------------------------
+# Ray worker bootstrap: ensure these patches also run inside Ray actor /
+# task processes. ``ray.init`` is monkey-patched to inject a
+# ``worker_process_setup_hook`` that imports verl_omni at worker startup,
+# which transitively re-runs every patch above.
+# ---------------------------------------------------------------------------
+def _ensure_workers_import_verl_omni() -> None:
+    try:
+        import ray
+    except ImportError:
+        return
+
+    if getattr(ray.init, "_verl_omni_patched", False):
+        return
+
+    _original_init = ray.init
+    _hook = "verl_omni._init_worker"
+
+    def _patched_init(*args, **kwargs):
+        runtime_env = kwargs.get("runtime_env") or {}
+        existing_hook = runtime_env.get("worker_process_setup_hook") if hasattr(runtime_env, "get") else None
+        if not existing_hook:
+            try:
+                runtime_env["worker_process_setup_hook"] = _hook
+            except TypeError:
+                runtime_env = {**dict(runtime_env), "worker_process_setup_hook": _hook}
+            kwargs["runtime_env"] = runtime_env
+        return _original_init(*args, **kwargs)
+    _patched_init._verl_omni_patched = True
+    ray.init = _patched_init
+
+
+_ensure_workers_import_verl_omni()
