@@ -239,3 +239,8 @@ class VLLMOmniHijack:
         if not getattr(OmniDiffusionConfig, "_verl_omni_master_port_hijacked", False):
             do_hijack(OmniDiffusionConfig, "__post_init__", hijack_omni_diffusion_config_post_init)
             OmniDiffusionConfig._verl_omni_master_port_hijacked = True
+
+        # Patch the standard vLLM LoRA manager for AR rollout TensorLoRARequest detection.
+        from verl.utils.vllm import VLLMHijack
+
+        VLLMHijack.hijack()
