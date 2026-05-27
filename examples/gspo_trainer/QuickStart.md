@@ -22,9 +22,9 @@ You need three repos, all on specific branches:
 
 | Repo | Branch | Purpose |
 |---|---|---|
-| [verl](https://github.com/verl-project/verl) | `main` (with the LoRA-FSDP PR merged or your fork's branch) | RL training framework |
-| [verl-omni](https://github.com/verl-project/verl-omni) | this repo's `main` | Qwen3-Omni glue + GSPO trainer entry point |
-| [vllm-omni](https://github.com/vllm-project/vllm-omni) | `main` (with the Thinker LoRA + logprobs PR) | Inference / rollout backend |
+| [verl](https://github.com/verl-project/verl) | `main` (PR#6512) | RL training framework |
+| [verl-omni](https://github.com/verl-project/verl-omni) | this PR | Qwen3-Omni glue + GSPO trainer entry point |
+| [vllm-omni](https://github.com/vllm-project/vllm-omni) | `main` (PR#3915) | Inference / rollout backend |
 
 Recommended install order (in a fresh Python 3.12 venv):
 
@@ -35,10 +35,12 @@ source .venv/bin/activate
 # 1. vllm + vllm-omni
 pip install vllm==0.21.0 --torch-backend=auto
 git clone https://github.com/vllm-project/vllm-omni.git
+gh pr checkout 3915 #(change to PR (#3915))
 pip install -e ./vllm-omni
 
 # 2. verl (use the LoRA-FSDP-aware version)
 git clone https://github.com/verl-project/verl.git
+gh pr checkout 6512 #(change to PR (#6512))
 pip install -e ./verl
 
 # 3. verl-omni
