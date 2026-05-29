@@ -11,16 +11,3 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import os
-
-with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "version/version")) as f:
-    __version__ = f.read().strip()
-
-
-# Lightweight — no torch/vllm imports, safe to run in Ray worker_process_setup_hook.
-import verl_omni.models.qwen3_omni_thinker._patches  # noqa: E402, F401
-
-
-def _init_worker() -> None:
-    """Ray worker_process_setup_hook entry point."""
-    pass

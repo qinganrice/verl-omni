@@ -1,8 +1,4 @@
-"""verl-omni entry point: import triggers replica registration, then delegate."""
-
-import verl_omni
-
-verl_omni.bootstrap()
+import verl_omni  # noqa: F401 — triggers model/rollout registration
 
 from verl.trainer.main_ppo import main  # noqa: E402
 

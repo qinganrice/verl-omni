@@ -102,6 +102,8 @@ python3 -m verl_omni.trainer.omni.main_ppo \
     \
     reward.reward_manager.name=dapo \
     \
+    ++plugins='[verl_omni]' \
+    \
     trainer.val_before_train=False \
     trainer.critic_warmup=0 \
     trainer.logger='["console","wandb"]' \
