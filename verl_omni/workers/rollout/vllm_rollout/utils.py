@@ -147,6 +147,6 @@ class vLLMOmniColocateWorkerExtension(*_platform_extension_bases()):
         job id is forwarded by the vLLMHttpServer actor as VERL_RAY_JOB_ID and
         inherited by this vLLM worker subprocess.
         """
-        job_id = os.environ.get("VERL_RAY_JOB_ID", "0")
         replica_rank = os.environ.get("VERL_REPLICA_RANK", "0")
+        job_id = os.environ.get("VERL_RAY_JOB_ID", "0")
         return f"ipc:///tmp/rl-colocate-zmq-{job_id}-replica-{replica_rank}-rank-{self.local_rank}.sock"

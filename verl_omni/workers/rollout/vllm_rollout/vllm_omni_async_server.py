@@ -158,6 +158,8 @@ class vLLMOmniHttpServer(vLLMHttpServer):
         self._server_port, self._server_task = await run_uvicorn(app, args, self._server_address)
 
     async def run_headless(self, args: argparse.Namespace):
+        """Run headless server in a separate thread."""
+        # TODO (mike): support multi node
         raise NotImplementedError("vLLM-Omni headless mode is not implemented yet.")
 
     # -----------------------------------------------------------------------
@@ -213,6 +215,7 @@ class vLLMOmniHttpServer(vLLMHttpServer):
         negative_prompt_ids: Optional[list[int]] = None,
         priority: int = 0,
     ) -> DiffusionOutput:
+        """Generate sequence with token-in-image-out."""
         prompt_ids = normalize_token_ids(prompt_ids)
 
         multi_modal_data = {}
@@ -220,15 +223,17 @@ class vLLMOmniHttpServer(vLLMHttpServer):
             multi_modal_data["image"] = image_data
         if video_data is not None:
             multi_modal_data["video"] = video_data
-
+         # Add lora request
         lora_request = None
         if self.lora_as_adapter:
+            # Make sure we also check that the lora is already loaded in the engine
             lora_loaded = VLLM_LORA_INT_ID in await self.engine.list_loras()
             if lora_loaded:
                 lora_request = LoRARequest(
                     lora_name=VLLM_LORA_NAME, lora_int_id=VLLM_LORA_INT_ID, lora_path=VLLM_LORA_PATH
                 )
 
+        # Build OmniCustomPrompt with pre-tokenized IDs
         custom_prompt: OmniCustomPrompt = {"prompt_ids": prompt_ids}
         if negative_prompt_ids is not None:
             custom_prompt["negative_prompt_ids"] = negative_prompt_ids
@@ -247,12 +252,14 @@ class vLLMOmniHttpServer(vLLMHttpServer):
             sampling_kwargs["lora_request"] = lora_request
         diffusion_sampling_params = OmniDiffusionSamplingParams(**sampling_kwargs)
 
+        # Call AsyncOmni.generate() with the correct API
         generator = self.engine.generate(
             prompt=custom_prompt,
             request_id=request_id,
             sampling_params_list=[diffusion_sampling_params],
         )
 
+        # Get final response
         final_res: Optional[OmniRequestOutput] = None
         async for output in generator:
             final_res = output
@@ -260,6 +267,7 @@ class vLLMOmniHttpServer(vLLMHttpServer):
 
         diffusion_output = self._to_tensor(final_res.images[0]).float() / 255.0
 
+        # Extract extra data from custom_output (populated by DiffusionEngine)
         mm_output = final_res.custom_output or {}
 
         if sampling_params.get("logprobs", False):
@@ -287,6 +295,7 @@ class vLLMOmniHttpServer(vLLMHttpServer):
             "global_steps": self.global_steps,
         }
 
+        # Determine stop reason from finish_reason
         if final_res.request_output is not None and hasattr(final_res.request_output, "finish_reason"):
             finish_reason = final_res.request_output.finish_reason or "stop"
         else:
@@ -297,7 +306,7 @@ class vLLMOmniHttpServer(vLLMHttpServer):
         elif finish_reason in ("stop", "length"):
             stop_reason = "completed"
         else:
-            stop_reason = finish_reason
+            stop_reason = finish_reason  # for more stop reason in the future
 
         num_preempted = None
         if final_res.request_output is not None and hasattr(final_res.request_output, "num_preempted"):

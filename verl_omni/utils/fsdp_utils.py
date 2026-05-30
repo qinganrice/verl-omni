@@ -15,7 +15,6 @@
 FSDP utilities for verl-omni
 """
 
-import logging
 from collections import OrderedDict
 
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
@@ -23,8 +22,6 @@ from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from verl.utils.device import get_torch_device
 from verl.utils.fsdp_utils import collect_lora_params as _upstream_collect_lora_params
 from verl.utils.fsdp_utils import fsdp_version
-
-logger = logging.getLogger(__name__)
 
 __all__ = ["collect_lora_params"]
 
@@ -74,11 +71,7 @@ def collect_lora_params(
     base_sync_done: bool,
     is_diffusers: bool = False,
 ) -> OrderedDict:
-    """Extended version of ``verl.utils.fsdp_utils.collect_lora_params``.
-
-    Additions over upstream:
-    - Diffusers-specific layered summon (transformer_blocks prefix).
-    """
+    """Extended version of ``verl.utils.fsdp_utils.collect_lora_params``."""
     if is_diffusers and layered_summon and fsdp_version(module) > 0:
         if not base_sync_done:
             raise ValueError(
@@ -87,6 +80,4 @@ def collect_lora_params(
             )
         return _layered_summon_lora_params_diffusers(module)
 
-    return _upstream_collect_lora_params(
-        module, layered_summon=layered_summon, base_sync_done=base_sync_done
-    )
+    return _upstream_collect_lora_params(module, layered_summon=layered_summon, base_sync_done=base_sync_done)
