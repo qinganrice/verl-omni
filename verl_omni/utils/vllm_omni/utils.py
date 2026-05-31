@@ -35,7 +35,6 @@ from vllm_omni.diffusion.models.diffusers_adapter.pipeline_diffusers_adapter imp
     DiffusersAdapterPipeline,
 )
 from vllm_omni.diffusion.registry import initialize_model
-from vllm_omni.lora.request import LoRARequest as OmniLoRARequest  # noqa: F401  (kept for re-export users)
 from verl.utils.vllm.utils import TensorLoRARequest
 from verl.utils.vllm import VLLMHijack
 

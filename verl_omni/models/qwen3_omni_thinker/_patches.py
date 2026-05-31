@@ -13,27 +13,10 @@
 # limitations under the License.
 """Register verl-omni's Qwen3-Omni Thinker adapter with upstream verl.
 
-Imported at verl_omni package init time (lightweight — no torch/vllm).
-All registrations use lazy loaders so heavy imports are deferred until
-the registered factories are actually invoked.
+Imported by ``verl_omni.registry`` at bootstrap time (lightweight — no
+torch/vllm at module import). All registrations use lazy loaders so heavy
+imports are deferred until the registered factories are actually invoked.
 """
-
-
-def _register_vllm_omni_rollout() -> None:
-    from verl.workers.rollout.base import register_rollout_adapter
-    from verl.workers.rollout.replica import RolloutReplicaRegistry
-
-    register_rollout_adapter("vllm_omni", "async", "verl.workers.rollout.vllm_rollout.ServerAdapter")
-
-    def _load_vllm_omni():
-        from verl_omni.workers.rollout.vllm_rollout.vllm_omni_async_server import vLLMOmniReplica
-
-        return vLLMOmniReplica
-
-    RolloutReplicaRegistry.register("vllm_omni", _load_vllm_omni)
-
-
-_register_vllm_omni_rollout()
 
 
 def _register_qwen3_omni_automodel() -> None:
