@@ -131,7 +131,11 @@ class vLLMOmniHttpServer(vLLMHttpServer):
                 }
         else:
             import_external_libs(self.config.external_lib)
-            pipeline_path = VllmOmniPipelineBase.get_pipeline_path(self.model_config.architecture)
+            pipeline_path = VllmOmniPipelineBase.get_pipeline_path(
+                architecture=self.model_config.architecture,
+                algorithm=self.model_config.algorithm,
+            )
+            # TODO (mike): read custom_pipeline from engine_args
             if pipeline_path is not None:
                 engine_args["enable_dummy_pipeline"] = True
                 engine_args["custom_pipeline_args"] = {"pipeline_class": pipeline_path}
@@ -179,6 +183,43 @@ class vLLMOmniHttpServer(vLLMHttpServer):
         await self.engine.reset_encoder_cache()
 
     # -----------------------------------------------------------------------
+    # Shared generate helpers
+    # -----------------------------------------------------------------------
+
+    @staticmethod
+    def _build_multi_modal_data(
+        image_data: Optional[list[Any]], video_data: Optional[list[Any]]
+    ) -> dict[str, Any]:
+        multi_modal_data: dict[str, Any] = {}
+        if image_data is not None:
+            multi_modal_data["image"] = image_data
+        if video_data is not None:
+            multi_modal_data["video"] = video_data
+        return multi_modal_data
+
+    async def _resolve_lora_request(self) -> Optional[LoRARequest]:
+        """Build the in-memory LoRA request when an adapter is loaded in the engine."""
+        if not self.lora_as_adapter:
+            return None
+        # ``list_loras`` aggregates across stages and may return a non-iterable
+        # before any adapter is loaded; treat that as "already loaded".
+        try:
+            lora_loaded = VLLM_LORA_INT_ID in await self.engine.list_loras()
+        except TypeError:
+            lora_loaded = True
+        if not lora_loaded:
+            return None
+        return LoRARequest(lora_name=VLLM_LORA_NAME, lora_int_id=VLLM_LORA_INT_ID, lora_path=VLLM_LORA_PATH)
+
+    @staticmethod
+    def _map_stop_reason(finish_reason: Optional[str]) -> Optional[str]:
+        if finish_reason == "abort":
+            return "aborted"
+        if finish_reason in ("stop", "length"):
+            return "completed"
+        return finish_reason  # pass other reasons through for the future
+
+    # -----------------------------------------------------------------------
     # generate: dispatch based on mode
     # -----------------------------------------------------------------------
 
@@ -213,20 +254,8 @@ class vLLMOmniHttpServer(vLLMHttpServer):
         """Generate sequence with token-in-image-out."""
         prompt_ids = normalize_token_ids(prompt_ids)
 
-        multi_modal_data = {}
-        if image_data is not None:
-            multi_modal_data["image"] = image_data
-        if video_data is not None:
-            multi_modal_data["video"] = video_data
-         # Add lora request
-        lora_request = None
-        if self.lora_as_adapter:
-            # Make sure we also check that the lora is already loaded in the engine
-            lora_loaded = VLLM_LORA_INT_ID in await self.engine.list_loras()
-            if lora_loaded:
-                lora_request = LoRARequest(
-                    lora_name=VLLM_LORA_NAME, lora_int_id=VLLM_LORA_INT_ID, lora_path=VLLM_LORA_PATH
-                )
+        multi_modal_data = self._build_multi_modal_data(image_data, video_data)
+        lora_request = await self._resolve_lora_request()
 
         # Build OmniCustomPrompt with pre-tokenized IDs
         custom_prompt: OmniCustomPrompt = {"prompt_ids": prompt_ids}
@@ -296,12 +325,7 @@ class vLLMOmniHttpServer(vLLMHttpServer):
         else:
             finish_reason = "stop"
 
-        if finish_reason == "abort":
-            stop_reason = "aborted"
-        elif finish_reason in ("stop", "length"):
-            stop_reason = "completed"
-        else:
-            stop_reason = finish_reason  # for more stop reason in the future
+        stop_reason = self._map_stop_reason(finish_reason)
 
         num_preempted = None
         if final_res.request_output is not None and hasattr(final_res.request_output, "num_preempted"):
@@ -352,26 +376,13 @@ class vLLMOmniHttpServer(vLLMHttpServer):
         sampling_params.setdefault("repetition_penalty", self.config.get("repetition_penalty", 1.0))
         sampling_params = SamplingParams(max_tokens=max_tokens, **sampling_params)
 
-        multi_modal_data = {}
-        if image_data is not None:
-            multi_modal_data["image"] = image_data
-        if video_data is not None:
-            multi_modal_data["video"] = video_data
+        multi_modal_data = self._build_multi_modal_data(image_data, video_data)
 
         prompt = {"prompt_token_ids": prompt_ids}
         if multi_modal_data:
             prompt["multi_modal_data"] = multi_modal_data
 
-        lora_request = None
-        if self.lora_as_adapter:
-            try:
-                lora_loaded = VLLM_LORA_INT_ID in await self.engine.list_loras()
-            except TypeError:
-                lora_loaded = True
-            if lora_loaded:
-                lora_request = LoRARequest(
-                    lora_name=VLLM_LORA_NAME, lora_int_id=VLLM_LORA_INT_ID, lora_path=VLLM_LORA_PATH
-                )
+        lora_request = await self._resolve_lora_request()
 
         generator = self.engine.generate(
             prompt=prompt,
@@ -401,12 +412,7 @@ class vLLMOmniHttpServer(vLLMHttpServer):
             ]
 
         finish_reason = req_output.outputs[0].finish_reason
-        if finish_reason == "abort":
-            stop_reason = "aborted"
-        elif finish_reason in ("stop", "length"):
-            stop_reason = "completed"
-        else:
-            stop_reason = finish_reason
+        stop_reason = self._map_stop_reason(finish_reason)
 
         num_preempted = None
         if hasattr(req_output.outputs[0], "num_preempted"):
