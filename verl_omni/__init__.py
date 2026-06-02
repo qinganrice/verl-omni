@@ -17,21 +17,19 @@ with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "version/vers
     __version__ = f.read().strip()
 
 
-import os
+# Register verl-omni with upstream verl/transformers. The patches are loaded via
+# importlib inside ``_loader.apply`` (rather than hard-importing the patch
+# modules here). This runs at ``import verl_omni`` time — before the trainer
+# imports ``verl.utils`` — because the hf_processor wrapper must be installed
+# before verl captures a reference to ``hf_processor``. Lightweight: no
+# torch/vllm imports, so it is safe inside a Ray ``worker_process_setup_hook``.
+from verl_omni._loader import apply as _apply_patches  # noqa: E402
 
-with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "version/version")) as f:
-    __version__ = f.read().strip()
-
-
-# Patch upstream verl: register vllm_omni rollout, Qwen3-Omni model class, etc.
-# Lightweight — touches only verl/transformers metadata, no torch/vllm imports,
-# so it is safe to run inside Ray worker_process_setup_hook before the actor
-# has been pinned to a specific CUDA device.
-import verl_omni._upstream_patches  # noqa: E402, F401
+_apply_patches()
 
 
 def bootstrap() -> None:
-    """Driver-side bootstrap: import sub-modules to trigger their registrations.
+    """Driver-side bootstrap: eager-import sub-modules to trigger their registrations.
 
     This is intentionally NOT done at top-level import time because
     ``verl_omni.workers.*`` transitively imports vllm/torch and would
@@ -48,7 +46,8 @@ def bootstrap() -> None:
 def _init_worker() -> None:
     """Ray ``worker_process_setup_hook`` entry point.
 
-    Importing this module already applied the upstream patches above; this
-    function exists so Ray can resolve ``verl_omni._init_worker``.
+    Importing this package already applied the upstream patches (see
+    ``_apply_patches`` above); this function exists so Ray can resolve
+    ``verl_omni._init_worker``.
     """
     return None

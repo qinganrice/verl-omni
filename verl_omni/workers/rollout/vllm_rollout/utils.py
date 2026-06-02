@@ -33,6 +33,8 @@ logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
 # the mixin is required because the underlying worker does not implement
 # the NPU-specific memory-pool / sleep / wake_up flow.
 def _platform_extension_bases():
+    # TODO: the NPU (Ascend) path below is not yet verified on real NPU hardware;
+    #       only the GPU branch is exercised by current tests / training runs.
     try:
         from vllm.platforms import current_platform
 
