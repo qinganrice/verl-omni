@@ -25,13 +25,13 @@ Place the raw dataset under `$WORKSPACE/data/ocr` (where `WORKSPACE` defaults to
 ```bash
 python3 examples/flowgrpo_trainer/data_process/qwenimage_ocr.py \
   --input_dir $WORKSPACE/data/ocr \
-  --output_dir $WORKSPACE/data/ocr
+  --output_dir $WORKSPACE/data/ocr/qwen_image
 ```
 
 This produces:
 
-- `$WORKSPACE/data/ocr/train.parquet`
-- `$WORKSPACE/data/ocr/test.parquet`
+- `$WORKSPACE/data/ocr/qwen_image/train.parquet`
+- `$WORKSPACE/data/ocr/qwen_image/test.parquet`
 
 ## Prepare the models
 
@@ -104,6 +104,11 @@ We have provided a script to enable non-cfg full-weight Qwen-Image OCR training.
 bash examples/flowgrpo_trainer/run_qwen_image_ocr.sh
 ```
 
+An NPU script for Atlas A3 with 16 NPUs is also provided. Before running, set the `ASCEND_HOME_PATH` environment variable (defaults to `/usr/local/Ascend/cann-9.0.0`).
+
+```bash
+bash examples/flowgrpo_trainer/run_qwen_image_ocr_npu.sh
+```
 
 ## Performance
 

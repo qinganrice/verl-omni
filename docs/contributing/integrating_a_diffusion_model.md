@@ -1,14 +1,17 @@
 # How to Integrate a New Diffusion Model for FlowGRPO Training
 
-Last updated: 05/10/2026.
+Last updated: 06/02/2026.
 
 This guide walks you through everything required to integrate a new diffusion
 model into VeRL-Omni so it can be trained end-to-end with the **FlowGRPO**
 algorithm. The contracts described below (registry hooks, adapter
 classmethods, scheduler choice, custom-output field names) are specific to
-the FlowGRPO trainer; other RL algorithms may impose different requirements
-(see [`integrating_a_new_algorithm_for_diffusion_model.md`](integrating_a_new_algorithm_for_diffusion_model.md) for
-how algorithm dispatch is layered on top of model dispatch).
+the FlowGRPO trainer; other RL algorithms may impose different requirements.
+Use
+[`integrating_a_new_policy_gradient_algorithm_for_diffusion_model.md`](integrating_a_new_policy_gradient_algorithm_for_diffusion_model.md)
+for PPO-like policy-gradient algorithms, and
+[`integrating_a_new_direct_preference_algorithm_for_diffusion_model.md`](integrating_a_new_direct_preference_algorithm_for_diffusion_model.md)
+for direct-preference algorithms.
 
 We use the **Qwen-Image** integration
 ([`verl_omni/pipelines/qwen_image_flow_grpo/`](../../verl_omni/pipelines/qwen_image_flow_grpo/__init__.py))
@@ -67,8 +70,8 @@ The two adapters must agree on:
   `"QwenImagePipeline"`.
 - **Algorithm string** (the `algorithm=` keyword on `@register(...)`).
   For this guide the value is always `"flow_grpo"`. When integrating a
-  different RL algorithm use the appropriate algorithm name — see
-  [`integrating_a_new_algorithm_for_diffusion_model.md`](integrating_a_new_algorithm_for_diffusion_model.md).
+  different RL algorithm use the appropriate algorithm name and the matching
+  algorithm-family guide.
 - **Prompt-encoding format** of the embeddings shipped through the agent
   loop. The rollout always returns padded `(B, L, D)` + `(B, L)` mask;
   the training adapter is free to convert to whatever the transformer
@@ -380,6 +383,10 @@ Before opening the PR, confirm every box:
       `model_index.json::_class_name`; the `algorithm=` keyword matches
       the algorithm you are integrating against (e.g. `"flow_grpo"` for
       FlowGRPO).
+- [ ] Scheduler returns latents in fp32 (no `model_output.dtype` cast in `step()`),
+      `diffuse()` casts to model dtype before transformer forward and casts
+      noise_pred to float32 before `scheduler.step()`
+      — see [Common Pitfalls](common_pitfalls.md#float32-precision-loss-in-stored-rollout-latents).
 - [ ] Any new `DiffusionPipelineConfig` field is mirrored in **both**
       [`diffusion_rollout.yaml`](../../verl_omni/trainer/config/diffusion/rollout/diffusion_rollout.yaml)
       and

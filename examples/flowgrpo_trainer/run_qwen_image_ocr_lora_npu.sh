@@ -4,12 +4,13 @@ set -x
 ASCEND_HOME_PATH=${ASCEND_HOME_PATH:-/usr/local/Ascend/cann-9.0.0}
 source $ASCEND_HOME_PATH/set_env.sh
 source $ASCEND_HOME_PATH/../nnal/atb/set_env.sh
+export RAY_EXPERIMENTAL_NOSET_ASCEND_RT_VISIBLE_DEVICES=1
 
 # Set WORKSPACE to any writable directory; defaults to $HOME
 WORKSPACE=${WORKSPACE:-$HOME}
 
-ocr_train_path=$WORKSPACE/data/ocr/train.parquet
-ocr_test_path=$WORKSPACE/data/ocr/test.parquet
+ocr_train_path=$WORKSPACE/data/ocr/qwen_image/train.parquet
+ocr_test_path=$WORKSPACE/data/ocr/qwen_image/test.parquet
 
 model_name=Qwen/Qwen-Image
 reward_model_name=Qwen/Qwen3-VL-8B-Instruct

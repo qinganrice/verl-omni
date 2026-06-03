@@ -17,7 +17,9 @@ import os
 from dataclasses import asdict
 from typing import Any, Optional, Union
 
+import numpy as np
 import ray
+import torch
 import torchvision.transforms as T
 import vllm_omni.entrypoints.cli.serve
 from vllm import SamplingParams
@@ -115,6 +117,29 @@ class vLLMOmniHttpServer(vLLMHttpServer):
                 if underscore_key in engine_kwargs:
                     engine_kwargs[underscore_key.replace("_", "-")] = engine_kwargs.pop(underscore_key)
 
+    # TODO: drop it after updating verl pin (at least 5ff595ac9fcb4)
+    async def launch_server(self, master_address: str = None, master_port: int = None, dp_rpc_port: int = None):
+        """Launch vLLM-Omni engine; coerce null ``rollout.seed`` for engine init only.
+
+        Upstream verl uses ``config.get("seed", 0)``, but Hydra ``seed: null`` sets the
+        attribute to None, so the default is not applied and launch crashes with
+        ``replica_rank + None``. Training rollout seeding stays unset via meta_info.
+        """
+        original_get = self.config.get
+
+        def get_with_engine_seed_default(key: str, default: Any = None) -> Any:
+            if key == "seed":
+                value = original_get(key, default)
+                return 0 if value is None else value
+            return original_get(key, default)
+
+        self.config.get = get_with_engine_seed_default
+        try:
+            await super().launch_server(master_address, master_port, dp_rpc_port)
+        finally:
+            # BaseConfig is frozen; pop the shadowed get instead of reassigning it.
+            self.config.__dict__.pop("get", None)
+
     # -----------------------------------------------------------------------
     # Server lifecycle
     # -----------------------------------------------------------------------
@@ -166,6 +191,23 @@ class vLLMOmniHttpServer(vLLMHttpServer):
 
     def _get_wake_up_tags(self) -> list[str]:
         return ["weights"]
+
+    async def wake_up(self, tags: list[str] | None = None):
+        """Override parent to use collective_rpc instead of engine.wake_up().
+
+        The parent (verl ``1927ad33``+) calls ``self.engine.wake_up(tags=...)``
+        which triggers CUDA initialisation in this HTTP server process when
+        running under vLLM-Omni (AsyncOmni engine).
+        Use ``collective_rpc`` instead.
+
+        # TODO (long): drop this override once vllm-omni wake_up
+        without triggering GPU initialisation.
+        """
+        if self.node_rank != 0:
+            return
+        await self.engine.collective_rpc(
+            "wake_up", kwargs={"tags": tags if tags is not None else self._get_wake_up_tags()}
+        )
 
     async def _sleep_hybrid(self):
         """Preserve non-actor pipeline weights during hybrid training sleep.
@@ -290,8 +332,13 @@ class vLLMOmniHttpServer(vLLMHttpServer):
         async for output in generator:
             final_res = output
         assert final_res is not None
-
-        diffusion_output = self._to_tensor(final_res.images[0]).float() / 255.0
+        diffusion_output = final_res.images[0]
+        if isinstance(diffusion_output, torch.Tensor):
+            diffusion_output = diffusion_output.float()
+        elif isinstance(diffusion_output, np.ndarray):
+            diffusion_output = torch.from_numpy(diffusion_output).float()
+        else:
+            diffusion_output = self._to_tensor(diffusion_output).float() / 255.0
 
         mm_output = final_res.custom_output or {}
 
@@ -307,10 +354,15 @@ class vLLMOmniHttpServer(vLLMHttpServer):
         prompt_embeds_mask = mm_output.get("prompt_embeds_mask")
         negative_prompt_embeds = mm_output.get("negative_prompt_embeds")
         negative_prompt_embeds_mask = mm_output.get("negative_prompt_embeds_mask")
+        latents_clean = mm_output.get("latents_clean")
+        train_timesteps = mm_output.get("train_timesteps")
 
+        # TODO(andy): refactor later.
         extra_fields = {
             "all_latents": all_latents[0] if all_latents is not None else None,
             "all_timesteps": all_timesteps[0] if all_timesteps is not None else None,
+            "latents_clean": latents_clean[0] if latents_clean is not None else None,
+            "train_timesteps": train_timesteps[0] if train_timesteps is not None else None,
             "prompt_embeds": prompt_embeds[0] if prompt_embeds is not None else None,
             "prompt_embeds_mask": prompt_embeds_mask[0] if prompt_embeds_mask is not None else None,
             "negative_prompt_embeds": negative_prompt_embeds[0] if negative_prompt_embeds is not None else None,
