@@ -47,7 +47,18 @@ def _init_worker() -> None:
     """Ray ``worker_process_setup_hook`` entry point.
 
     Importing this package already applied the upstream patches (see
-    ``_apply_patches`` above); this function exists so Ray can resolve
-    ``verl_omni._init_worker``.
+    ``_apply_patches`` above). If verl_omni displaced a pre-existing setup hook
+    (recorded by ``_loader`` in ``VERL_OMNI_CHAINED_SETUP_HOOK``), run it now so
+    it is chained rather than silently dropped.
     """
-    return None
+    import os
+
+    chained = os.environ.get("VERL_OMNI_CHAINED_SETUP_HOOK")
+    if not chained:
+        return
+    import importlib
+
+    module_name, _, attr = chained.rpartition(".")
+    if not module_name:
+        return
+    getattr(importlib.import_module(module_name), attr)()

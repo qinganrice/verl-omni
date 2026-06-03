@@ -30,6 +30,9 @@ deferred to inside the functions below.
 """
 
 import importlib
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Model-specific patch modules, loaded lazily via importlib so new model
 # patches can be added here without hard-importing them at package top level.
@@ -96,13 +99,35 @@ def _ensure_workers_import_verl_omni() -> None:
 
     def _patched_init(*args, **kwargs):
         runtime_env = kwargs.get("runtime_env") or {}
-        existing_hook = runtime_env.get("worker_process_setup_hook") if hasattr(runtime_env, "get") else None
-        if not existing_hook:
-            try:
-                runtime_env["worker_process_setup_hook"] = _hook
-            except TypeError:
-                runtime_env = {**dict(runtime_env), "worker_process_setup_hook": _hook}
-            kwargs["runtime_env"] = runtime_env
+        # Normalize to a mutable mapping we can read/update.
+        if not hasattr(runtime_env, "get"):
+            runtime_env = dict(runtime_env)
+
+        existing_hook = runtime_env.get("worker_process_setup_hook")
+        if existing_hook == _hook:
+            # Our hook is already installed; nothing to do.
+            return _original_init(*args, **kwargs)
+
+        if existing_hook:
+            # Do NOT silently drop a pre-existing hook (that would prevent it
+            # from running on workers). Chain it: record it so ``_init_worker``
+            # runs it after applying verl_omni's patches.
+            env_vars = dict(runtime_env.get("env_vars") or {})
+            if isinstance(existing_hook, str):
+                env_vars.setdefault("VERL_OMNI_CHAINED_SETUP_HOOK", existing_hook)
+            else:
+                logger.warning(
+                    "verl_omni: replacing a non-string worker_process_setup_hook "
+                    "(%r); it cannot be chained and will not run on Ray workers.",
+                    existing_hook,
+                )
+            runtime_env = {**dict(runtime_env), "env_vars": env_vars}
+
+        try:
+            runtime_env["worker_process_setup_hook"] = _hook
+        except TypeError:
+            runtime_env = {**dict(runtime_env), "worker_process_setup_hook": _hook}
+        kwargs["runtime_env"] = runtime_env
         return _original_init(*args, **kwargs)
 
     _patched_init._verl_omni_patched = True

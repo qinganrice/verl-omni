@@ -57,11 +57,18 @@ class VLLMOmniHijack:
     caller, so the two hijacks stay decoupled.
     """
 
+    _patched = False
+
     @staticmethod
     def hijack():
         # Diffusion-side (vllm-omni) patches only. verl's base vLLM LoRA hijack
         # is applied separately by the caller (see vllm_omni_async_server /
         # the rollout worker extension).
+        # Idempotency guard: hijack() runs on every worker __new__; only patch once.
+        if VLLMOmniHijack._patched:
+            return
+        VLLMOmniHijack._patched = True
+
         def hijack__load_adapter(self, lora_request: OmniTensorLoRARequest) -> tuple[LoRAModel, PEFTHelper]:
             """
             based on vllm_omni.diffusion.lora.manager.DiffusionLoRAManager._load_adapter,

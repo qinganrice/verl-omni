@@ -420,11 +420,15 @@ class vLLMOmniHttpServer(vLLMHttpServer):
             )
         max_tokens = max(0, min(max_tokens, max_possible_tokens))
 
-        # ``logprobs=0`` is a valid vLLM setting; preserve 0 and only fall back to None when missing/False.
+        # Normalize ``logprobs``: bare ``True`` -> 0 (sampled-token logprob),
+        # preserve explicit int counts (incl. 0), fall back to None otherwise.
         logprobs = sampling_params.pop("logprobs", None)
-        sampling_params["logprobs"] = (
-            0 if (logprobs is True or (isinstance(logprobs, int) and logprobs is not False)) else None
-        )
+        if logprobs is True:
+            sampling_params["logprobs"] = 0
+        elif isinstance(logprobs, int) and not isinstance(logprobs, bool):
+            sampling_params["logprobs"] = logprobs
+        else:
+            sampling_params["logprobs"] = None
         sampling_params.setdefault("repetition_penalty", self.config.get("repetition_penalty", 1.0))
         sampling_params = SamplingParams(max_tokens=max_tokens, **sampling_params)
 
