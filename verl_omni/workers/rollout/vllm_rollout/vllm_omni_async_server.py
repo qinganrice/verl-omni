@@ -14,7 +14,6 @@
 import argparse
 import logging
 import os
-import socket
 from dataclasses import asdict
 from typing import Any, Optional, Union
 
@@ -32,6 +31,7 @@ from vllm_omni.outputs import OmniRequestOutput
 
 from verl.utils.config import omega_conf_to_dataclass
 from verl.utils.import_utils import import_external_libs
+from verl.utils.net_utils import get_free_port
 from verl.utils.tokenizer import normalize_token_ids
 from verl.workers.config import HFModelConfig, RolloutConfig
 from verl.workers.rollout.replica import TokenOutput
@@ -49,12 +49,6 @@ from verl_omni.workers.rollout.replica import DiffusionOutput
 
 logger = logging.getLogger(__file__)
 logger.setLevel(logging.INFO)
-
-
-def _get_free_loopback_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
 
 
 class vLLMOmniHttpServer(vLLMHttpServer):
@@ -141,13 +135,19 @@ class vLLMOmniHttpServer(vLLMHttpServer):
                 engine_args["enable_dummy_pipeline"] = True
                 engine_args["custom_pipeline_args"] = {"pipeline_class": pipeline_path}
 
+        diffusion_master_port, diffusion_master_sock = get_free_port("127.0.0.1", with_alive_sock=True)
+        diffusion_master_sock.close()
+
         os.environ["MASTER_ADDR"] = "127.0.0.1"
-        os.environ["MASTER_PORT"] = str(_get_free_loopback_port())
+        os.environ["MASTER_PORT"] = str(diffusion_master_port)
         logger.info("Using MASTER_PORT=%s for vLLM-Omni diffusion workers", os.environ["MASTER_PORT"])
 
-        # Apply hijacks before AsyncOmni builds OmniDiffusionConfig.
+        # Apply hijacks before AsyncOmni builds OmniDiffusionConfig: verl's base
+        # vLLM LoRA hijack first, then the vllm-omni diffusion-side patches.
+        from verl.utils.vllm import VLLMHijack
         from verl_omni.utils.vllm_omni import VLLMOmniHijack
 
+        VLLMHijack.hijack()
         VLLMOmniHijack.hijack()
 
         engine_client = AsyncOmni(**engine_args)
@@ -203,6 +203,49 @@ class vLLMOmniHttpServer(vLLMHttpServer):
             prompt_ids, sampling_params, request_id, image_data, video_data, negative_prompt_ids, priority
         )
 
+    # -----------------------------------------------------------------------
+    # Shared helpers for the AR and diffusion generate paths
+    # -----------------------------------------------------------------------
+
+    @staticmethod
+    def _build_multi_modal_data(
+        image_data: Optional[list[Any]], video_data: Optional[list[Any]]
+    ) -> dict[str, Any]:
+        """Assemble the vLLM multi_modal_data dict from optional image/video inputs."""
+        multi_modal_data: dict[str, Any] = {}
+        if image_data is not None:
+            multi_modal_data["image"] = image_data
+        if video_data is not None:
+            multi_modal_data["video"] = video_data
+        return multi_modal_data
+
+    async def _resolve_lora_request(self) -> Optional[LoRARequest]:
+        """Build the actor LoRA request if a LoRA adapter is currently loaded.
+
+        Wraps ``list_loras`` in a ``try/except TypeError`` (a strict superset of
+        the plain membership check): some engine backends return a non-iterable,
+        in which case we assume the adapter is loaded. The diffusion path is
+        unchanged in the normal (iterable) case.
+        """
+        if not self.lora_as_adapter:
+            return None
+        try:
+            lora_loaded = VLLM_LORA_INT_ID in await self.engine.list_loras()
+        except TypeError:
+            lora_loaded = True
+        if not lora_loaded:
+            return None
+        return LoRARequest(lora_name=VLLM_LORA_NAME, lora_int_id=VLLM_LORA_INT_ID, lora_path=VLLM_LORA_PATH)
+
+    @staticmethod
+    def _map_stop_reason(finish_reason: Optional[str]) -> Optional[str]:
+        """Map a vLLM finish_reason to verl's stop_reason vocabulary."""
+        if finish_reason == "abort":
+            return "aborted"
+        if finish_reason in ("stop", "length"):
+            return "completed"
+        return finish_reason
+
     async def _generate_diffusion(
         self,
         prompt_ids: list[int],
@@ -215,19 +258,9 @@ class vLLMOmniHttpServer(vLLMHttpServer):
     ) -> DiffusionOutput:
         prompt_ids = normalize_token_ids(prompt_ids)
 
-        multi_modal_data = {}
-        if image_data is not None:
-            multi_modal_data["image"] = image_data
-        if video_data is not None:
-            multi_modal_data["video"] = video_data
+        multi_modal_data = self._build_multi_modal_data(image_data, video_data)
 
-        lora_request = None
-        if self.lora_as_adapter:
-            lora_loaded = VLLM_LORA_INT_ID in await self.engine.list_loras()
-            if lora_loaded:
-                lora_request = LoRARequest(
-                    lora_name=VLLM_LORA_NAME, lora_int_id=VLLM_LORA_INT_ID, lora_path=VLLM_LORA_PATH
-                )
+        lora_request = await self._resolve_lora_request()
 
         custom_prompt: OmniCustomPrompt = {"prompt_ids": prompt_ids}
         if negative_prompt_ids is not None:
@@ -292,12 +325,7 @@ class vLLMOmniHttpServer(vLLMHttpServer):
         else:
             finish_reason = "stop"
 
-        if finish_reason == "abort":
-            stop_reason = "aborted"
-        elif finish_reason in ("stop", "length"):
-            stop_reason = "completed"
-        else:
-            stop_reason = finish_reason
+        stop_reason = self._map_stop_reason(finish_reason)
 
         num_preempted = None
         if final_res.request_output is not None and hasattr(final_res.request_output, "num_preempted"):
@@ -348,26 +376,13 @@ class vLLMOmniHttpServer(vLLMHttpServer):
         sampling_params.setdefault("repetition_penalty", self.config.get("repetition_penalty", 1.0))
         sampling_params = SamplingParams(max_tokens=max_tokens, **sampling_params)
 
-        multi_modal_data = {}
-        if image_data is not None:
-            multi_modal_data["image"] = image_data
-        if video_data is not None:
-            multi_modal_data["video"] = video_data
+        multi_modal_data = self._build_multi_modal_data(image_data, video_data)
 
         prompt = {"prompt_token_ids": prompt_ids}
         if multi_modal_data:
             prompt["multi_modal_data"] = multi_modal_data
 
-        lora_request = None
-        if self.lora_as_adapter:
-            try:
-                lora_loaded = VLLM_LORA_INT_ID in await self.engine.list_loras()
-            except TypeError:
-                lora_loaded = True
-            if lora_loaded:
-                lora_request = LoRARequest(
-                    lora_name=VLLM_LORA_NAME, lora_int_id=VLLM_LORA_INT_ID, lora_path=VLLM_LORA_PATH
-                )
+        lora_request = await self._resolve_lora_request()
 
         generator = self.engine.generate(
             prompt=prompt,
@@ -397,12 +412,7 @@ class vLLMOmniHttpServer(vLLMHttpServer):
             ]
 
         finish_reason = req_output.outputs[0].finish_reason
-        if finish_reason == "abort":
-            stop_reason = "aborted"
-        elif finish_reason in ("stop", "length"):
-            stop_reason = "completed"
-        else:
-            stop_reason = finish_reason
+        stop_reason = self._map_stop_reason(finish_reason)
 
         num_preempted = None
         if hasattr(req_output.outputs[0], "num_preempted"):
