@@ -71,6 +71,26 @@ class vLLMOmniColocateWorkerExtension(*_platform_extension_bases()):
 
         return super().__new__(cls)
 
+    def _get_standard_weight_model_and_config(self):
+        """Return ``(model, model_config)`` for the standard (non-LoRA) AR weight path.
+
+        Reaches the underlying vLLM model + ``ModelConfig`` via the worker's
+        ``model_runner`` (the same handles ``GPUModelRunner.reload_weights`` uses).
+        Returns ``None`` for workers without this chain (e.g. the diffusion
+        pipeline worker), so the caller falls back to its own loader.
+        """
+        model_runner = getattr(self, "model_runner", None)
+        if model_runner is None:
+            return None
+        if hasattr(model_runner, "get_model"):
+            model = model_runner.get_model()
+        else:
+            model = getattr(model_runner, "model", None)
+        model_config = getattr(model_runner, "model_config", None)
+        if model is not None and model_config is not None and hasattr(model, "load_weights"):
+            return model, model_config
+        return None
+
     def update_weights_from_ipc(self, peft_config: dict = None, base_sync_done=False, use_shm: bool = False):
         """Update the weights of the rollout model."""
 
@@ -112,11 +132,21 @@ class vLLMOmniColocateWorkerExtension(*_platform_extension_bases()):
                 _gc.collect()
                 torch.cuda.empty_cache()
         else:
+            standard = self._get_standard_weight_model_and_config()
             receiver.receive_weights(
                 on_bucket_received=lambda weights: self._update_weights(
                     weights, peft_config=peft_config, base_sync_done=base_sync_done
                 )
             )
+            # Buckets were loaded via the low-level ``model.load_weights`` (no
+            # per-bucket finalize). Run the single post-load processing pass once
+            # all buckets are in — matching core verl's bucketed standard-weight
+            # path and avoiding ``reload_weights`` re-finalizing each partial bucket.
+            if standard is not None:
+                from vllm.model_executor.model_loader.utils import process_weights_after_loading
+
+                model, model_config = standard
+                process_weights_after_loading(model, model_config, self.device)
 
     def _update_weights(self, weights: list[tuple[str, torch.Tensor]], peft_config: dict, base_sync_done: bool):
         if peft_config and base_sync_done:
@@ -133,10 +163,18 @@ class vLLMOmniColocateWorkerExtension(*_platform_extension_bases()):
             logger.info(f"vLLM-Omni load weights, loaded_params: {len(weights)}")
         else:
             logger.info("Loading standard weights (async)")
-            # vLLM v1 GPU workers expose ``reload_weights``; the diffusion
-            # worker exposes ``load_weights``. Dispatch by hasattr so this
-            # branch handles both worker classes.
-            if hasattr(self, "reload_weights"):
+            # Bucketed transfer: load each bucket with the low-level
+            # ``model.load_weights`` (no per-bucket finalize). Using
+            # ``reload_weights`` here would run initialize/finalize_layerwise_reload
+            # on every partial bucket — repeatedly finalizing incomplete weights
+            # and logging spurious "weights not loaded" warnings. The single
+            # finalize (process_weights_after_loading) runs once in
+            # ``update_weights_from_ipc`` after all buckets are received.
+            standard = self._get_standard_weight_model_and_config()
+            if standard is not None:
+                model, _ = standard
+                model.load_weights(weights)
+            elif hasattr(self, "reload_weights"):
                 self.reload_weights(weights)
             else:
                 self.load_weights(weights)
