@@ -19,9 +19,10 @@ Applied as an import side effect: importing this module
   * extends ``verl.utils.tokenizer.hf_processor`` to recognize the Qwen3-Omni
     multimodal processor (binding the Thinker's ``get_rope_index``).
 
-The module is loaded via ``importlib`` from ``verl_omni._loader`` so the package
-does not hard-import it; all heavy transformers imports are deferred to inside
-the functions below so this stays safe to run in a Ray ``worker_process_setup_hook``.
+The module is imported by ``verl_omni.models.qwen3_omni_thinker`` (which the
+package ``__init__`` imports), so its patches apply when verl loads verl_omni.
+Heavy transformers imports are deferred to inside the functions below so this
+stays safe to run inside a Ray ``worker_process_setup_hook``.
 """
 
 
