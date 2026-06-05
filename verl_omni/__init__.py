@@ -37,15 +37,3 @@ def _register() -> None:
 
 
 _register()
-
-
-def bootstrap() -> None:
-    """Driver-side eager import of heavy (CUDA-touching) modules.
-
-    Kept out of package import so ``import verl_omni`` stays lightweight and safe
-    to run inside Ray workers before CUDA_VISIBLE_DEVICES is narrowed.
-    """
-    import verl_omni.pipelines  # noqa: F401
-    import verl_omni.reward_loop  # noqa: F401
-    import verl_omni.workers.engine  # noqa: F401
-    import verl_omni.workers.rollout  # noqa: F401

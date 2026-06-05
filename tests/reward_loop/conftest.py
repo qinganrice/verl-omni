@@ -11,6 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import verl_omni
-
-verl_omni.bootstrap()
+# These reward-loop tests exercise the diffusion stack; import the diffusion
+# subpackages so their registrations (model adapters, engines, reward managers)
+# are applied before the tests run.
+import verl_omni.pipelines  # noqa: F401
+import verl_omni.reward_loop  # noqa: F401
+import verl_omni.workers.engine  # noqa: F401

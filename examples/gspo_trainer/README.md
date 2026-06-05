@@ -1,35 +1,38 @@
 # Qwen3-Omni Thinker GSPO + LoRA Trainer
 
-End-to-end RL fine-tuning of the **Qwen3-Omni-30B-A3B Thinker** with **GSPO +
-LoRA** on a math-reasoning task, using FSDP for the actor and `vllm-omni` as the
-async rollout backend.
+This example shows how to post-train the **Qwen3-Omni-30B-A3B Thinker** with
+**GSPO + LoRA** on a math-reasoning task, using FSDP for the actor and
+`vllm-omni` as the async rollout backend.
+
+For the base environment setup, see the [installation guide](../../docs/start/install.md).
 
 ## Installation
 
-This recipe needs three repos. A single node with **4 × H100/H200 80GB** is the
-verified baseline: the actor (FSDP, 30B + LoRA r=64 with param/optimizer
-offload) and the `vllm-omni` rollout (TP=4, `gpu_memory_utilization=0.2`)
-colocate on the same 4 GPUs. Multi-node is not yet validated.
-
-In a fresh Python 3.12 venv:
+Follow the [installation guide](../../docs/start/install.md) to set up the base
+environment. This recipe was validated on **vllm 0.21.0** (newer than the
+version pinned in that guide) with `vllm-omni@main`, so install the following
+versions instead:
 
 ```bash
-# 1. vllm + vllm-omni rollout backend
+# vllm + vllm-omni rollout backend
 pip install vllm==0.21.0 --torch-backend=auto
 pip install "vllm-omni @ git+https://github.com/vllm-project/vllm-omni.git@main"
 
-# 2. verl (training framework)
+# verl (training framework) + verl-omni (this repo)
 pip install "verl @ git+https://github.com/verl-project/verl.git@main"
-
-# 3. verl-omni (this repo)
 pip install -e .
 ```
 
-Verify the environment:
+Verify:
 
 ```bash
 python -c "import verl, verl_omni, vllm, vllm_omni; print('OK')"
 ```
+
+The provided script is configured for a single node with **4 × H100/H200 80GB**:
+the actor (FSDP, 30B + LoRA r=64 with param/optimizer offload) and the
+`vllm-omni` rollout (TP=4, `gpu_memory_utilization=0.2`) colocate on the same 4
+GPUs. Multi-node is not yet validated.
 
 > `vllm>=0.21` pulls `numpy>=2.x` while verl/verl-omni still pin `numpy<2.0.0`;
 > the codepaths used here are numpy-2 compatible, so the pip resolver warning is

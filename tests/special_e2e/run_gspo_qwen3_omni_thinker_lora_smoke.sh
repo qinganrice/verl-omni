@@ -36,7 +36,7 @@ if [ ! -d "${MODEL_PATH}" ]; then
 fi
 
 # ── Run training (tiny: 2 steps, LoRA, GSPO, vLLM-Omni AR rollout) ────────────
-python3 -m verl_omni.trainer.omni.main_ppo \
+python3 -m verl.trainer.main_ppo \
     data.train_files="${DATA_DIR}/train.parquet" \
     data.val_files="${DATA_DIR}/test.parquet" \
     data.train_batch_size=4 \

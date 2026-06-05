@@ -11,4 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from . import qwen3_omni_thinker  # noqa: F401  add new model packages here to register their patches
+"""Upstream model patches — NOT model implementations.
+
+Each subpackage applies, on import, the transformers/verl patches a specific
+model needs to train under verl-omni (e.g. registering it with
+``AutoModelForCausalLM`` or extending ``hf_processor``). To support a new model,
+add a subpackage and import it below.
+"""
+from . import qwen3_omni_thinker  # noqa: F401  applies the model's patches on import

@@ -30,7 +30,7 @@ ROLLOUT_TP=4
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STAGE_CONFIG="${SCRIPT_DIR}/qwen3_omni_thinker_only.yaml"
 
-python3 -m verl_omni.trainer.omni.main_ppo \
+python3 -m verl.trainer.main_ppo \
     \
     data.train_files="${TRAIN_FILE}" \
     data.val_files="${VAL_FILE}" \
