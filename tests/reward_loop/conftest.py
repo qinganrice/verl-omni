@@ -11,9 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# These reward-loop tests exercise the diffusion stack; import the diffusion
-# subpackages so their registrations (model adapters, engines, reward managers)
-# are applied before the tests run.
-import verl_omni.pipelines  # noqa: F401
-import verl_omni.reward_loop  # noqa: F401
-import verl_omni.workers.engine  # noqa: F401
+# Importing verl_omni applies all registrations (diffusion model adapters /
+# engines / reward managers) these reward-loop tests rely on.
+import verl_omni  # noqa: F401

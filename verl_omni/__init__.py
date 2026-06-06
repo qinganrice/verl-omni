@@ -17,6 +17,13 @@ with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "version/vers
     __version__ = f.read().strip()
 
 
+# Import pipelines / rollout / reward loop / engines to auto-register them
+import verl_omni.pipelines  # noqa: E402, F401
+import verl_omni.reward_loop  # noqa: E402, F401
+import verl_omni.workers.engine  # noqa: E402, F401
+import verl_omni.workers.rollout  # noqa: E402, F401
+
+
 # Lightweight registration (no torch/vllm). verl discovers and imports this
 # package via the "verl.plugins" entry point on the driver and inside Ray
 # workers, so these registrations apply in every process.
