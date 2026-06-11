@@ -183,6 +183,8 @@ class vLLMOmniHttpServer(vLLMHttpServer):
         self._server_port, self._server_task = await run_uvicorn(app, args, self._server_address)
 
     async def run_headless(self, args: argparse.Namespace):
+        """Run headless server in a separate thread."""
+        # TODO (mike): support multi node
         raise NotImplementedError("vLLM-Omni headless mode is not implemented yet.")
 
     # -----------------------------------------------------------------------
@@ -224,7 +226,8 @@ class vLLMOmniHttpServer(vLLMHttpServer):
         await self.engine.reset_encoder_cache()
 
     # -----------------------------------------------------------------------
-    # generate: dispatch based on mode
+    # generate: shared pipeline; mode-specific steps branch on self._ar_mode
+    # (_preprocess_input / _run_generation / _process_output).
     # -----------------------------------------------------------------------
 
     async def generate(
@@ -237,13 +240,14 @@ class vLLMOmniHttpServer(vLLMHttpServer):
         negative_prompt_ids: Optional[list[int]] = None,
         priority: int = 0,
     ) -> Union[DiffusionOutput, TokenOutput]:
-        if self._ar_mode:
-            return await self._generate_ar(
-                prompt_ids, sampling_params, request_id, image_data, video_data, priority
-            )
-        return await self._generate_diffusion(
-            prompt_ids, sampling_params, request_id, image_data, video_data, negative_prompt_ids, priority
+        prompt_ids = normalize_token_ids(prompt_ids)
+        multi_modal_data = self._build_multi_modal_data(image_data, video_data)
+        lora_request = await self._resolve_lora_request()
+        prompt, params = self._preprocess_input(
+            prompt_ids, sampling_params, multi_modal_data, lora_request, negative_prompt_ids
         )
+        final_res = await self._run_generation(prompt, params, request_id, lora_request, priority)
+        return self._process_output(final_res, params, sampling_params)
 
     # -----------------------------------------------------------------------
     # Shared helpers for the AR and diffusion generate paths
@@ -288,22 +292,55 @@ class vLLMOmniHttpServer(vLLMHttpServer):
             return "completed"
         return finish_reason
 
-    async def _generate_diffusion(
+    def _preprocess_input(
         self,
         prompt_ids: list[int],
         sampling_params: dict[str, Any],
-        request_id: str,
-        image_data: Optional[list[Any]] = None,
-        video_data: Optional[list[Any]] = None,
-        negative_prompt_ids: Optional[list[int]] = None,
-        priority: int = 0,
-    ) -> DiffusionOutput:
-        prompt_ids = normalize_token_ids(prompt_ids)
+        multi_modal_data: dict[str, Any],
+        lora_request: Optional[LoRARequest],
+        negative_prompt_ids: Optional[list[int]],
+    ):
+        """Build the engine prompt + sampling params for the active mode.
 
-        multi_modal_data = self._build_multi_modal_data(image_data, video_data)
+        Returns ``(prompt, params)`` consumed by ``_run_generation``.
+        """
+        if self._ar_mode:
+            max_possible_tokens = self.config.max_model_len - len(prompt_ids)
+            if max_possible_tokens <= 0:
+                raise ValueError(
+                    f"Prompt length ({len(prompt_ids)}) meets or exceeds the model's maximum context length "
+                    f"({self.config.max_model_len}), leaving no space for generation."
+                )
 
-        lora_request = await self._resolve_lora_request()
+            if "max_tokens" in sampling_params:
+                max_tokens = sampling_params.pop("max_tokens")
+            elif "max_new_tokens" in sampling_params:
+                max_tokens = sampling_params.pop("max_new_tokens")
+            else:
+                max_tokens = min(
+                    self.config.response_length,
+                    self.config.prompt_length + self.config.response_length - len(prompt_ids),
+                )
+            max_tokens = max(0, min(max_tokens, max_possible_tokens))
 
+            # Normalize ``logprobs``: bare ``True`` -> 0 (sampled-token logprob),
+            # preserve explicit int counts (incl. 0), fall back to None otherwise.
+            logprobs = sampling_params.pop("logprobs", None)
+            if logprobs is True:
+                sampling_params["logprobs"] = 0
+            elif isinstance(logprobs, int) and not isinstance(logprobs, bool):
+                sampling_params["logprobs"] = logprobs
+            else:
+                sampling_params["logprobs"] = None
+            sampling_params.setdefault("repetition_penalty", self.config.get("repetition_penalty", 1.0))
+            params = SamplingParams(max_tokens=max_tokens, **sampling_params)
+
+            prompt = {"prompt_token_ids": prompt_ids}
+            if multi_modal_data:
+                prompt["multi_modal_data"] = multi_modal_data
+            return prompt, params
+
+        # diffusion
         custom_prompt: OmniCustomPrompt = {"prompt_ids": prompt_ids}
         if negative_prompt_ids is not None:
             custom_prompt["negative_prompt_ids"] = negative_prompt_ids
@@ -320,17 +357,65 @@ class vLLMOmniHttpServer(vLLMHttpServer):
         sampling_kwargs["extra_args"] = extra_args
         if lora_request is not None:
             sampling_kwargs["lora_request"] = lora_request
-        diffusion_sampling_params = OmniDiffusionSamplingParams(**sampling_kwargs)
+        params = OmniDiffusionSamplingParams(**sampling_kwargs)
+        return custom_prompt, params
 
-        generator = self.engine.generate(
-            prompt=custom_prompt,
-            request_id=request_id,
-            sampling_params_list=[diffusion_sampling_params],
-        )
-
+    async def _run_generation(self, prompt, params, request_id: str, lora_request, priority: int):
+        """Drive the engine and return the final OmniRequestOutput."""
+        if self._ar_mode:
+            generator = self.engine.generate(
+                prompt=prompt,
+                sampling_params=params,
+                request_id=request_id,
+                lora_request=lora_request,
+                priority=priority,
+            )
+        else:
+            generator = self.engine.generate(
+                prompt=prompt,
+                request_id=request_id,
+                sampling_params_list=[params],
+            )
         final_res: Optional[OmniRequestOutput] = None
         async for output in generator:
             final_res = output
+        return final_res
+
+    def _process_output(self, final_res, params, sampling_params: dict[str, Any]):
+        """Convert the engine output into the active mode's verl output dataclass."""
+        if self._ar_mode:
+            if final_res is None:
+                raise RuntimeError("AR mode: vLLM-Omni engine yielded no output for the prompt.")
+
+            req_output = final_res.request_output
+            if req_output is None:
+                raise RuntimeError("AR mode expects request_output with token IDs, but got None.")
+
+            extra_fields = {"global_steps": self.global_steps}
+            token_ids = req_output.outputs[0].token_ids
+            log_probs = None
+            if params.logprobs is not None:
+                log_probs = [
+                    logprobs[token_ids[i]].logprob
+                    for i, logprobs in enumerate(req_output.outputs[0].logprobs)
+                ]
+
+            finish_reason = req_output.outputs[0].finish_reason
+            stop_reason = self._map_stop_reason(finish_reason)
+
+            num_preempted = None
+            if hasattr(req_output.outputs[0], "num_preempted"):
+                num_preempted = req_output.outputs[0].num_preempted
+
+            return TokenOutput(
+                token_ids=token_ids,
+                log_probs=log_probs,
+                stop_reason=stop_reason,
+                num_preempted=num_preempted,
+                extra_fields=extra_fields,
+            )
+
+        # diffusion
         assert final_res is not None
         diffusion_output = final_res.images[0]
         if isinstance(diffusion_output, torch.Tensor):
@@ -391,98 +476,8 @@ class vLLMOmniHttpServer(vLLMHttpServer):
             extra_fields=extra_fields,
         )
 
-    async def _generate_ar(
-        self,
-        prompt_ids: list[int],
-        sampling_params: dict[str, Any],
-        request_id: str,
-        image_data: Optional[list[Any]] = None,
-        video_data: Optional[list[Any]] = None,
-        priority: int = 0,
-    ) -> TokenOutput:
-        prompt_ids = normalize_token_ids(prompt_ids)
-
-        max_possible_tokens = self.config.max_model_len - len(prompt_ids)
-        if max_possible_tokens <= 0:
-            raise ValueError(
-                f"Prompt length ({len(prompt_ids)}) meets or exceeds the model's maximum context length "
-                f"({self.config.max_model_len}), leaving no space for generation."
-            )
-
-        if "max_tokens" in sampling_params:
-            max_tokens = sampling_params.pop("max_tokens")
-        elif "max_new_tokens" in sampling_params:
-            max_tokens = sampling_params.pop("max_new_tokens")
-        else:
-            max_tokens = min(
-                self.config.response_length,
-                self.config.prompt_length + self.config.response_length - len(prompt_ids),
-            )
-        max_tokens = max(0, min(max_tokens, max_possible_tokens))
-
-        # Normalize ``logprobs``: bare ``True`` -> 0 (sampled-token logprob),
-        # preserve explicit int counts (incl. 0), fall back to None otherwise.
-        logprobs = sampling_params.pop("logprobs", None)
-        if logprobs is True:
-            sampling_params["logprobs"] = 0
-        elif isinstance(logprobs, int) and not isinstance(logprobs, bool):
-            sampling_params["logprobs"] = logprobs
-        else:
-            sampling_params["logprobs"] = None
-        sampling_params.setdefault("repetition_penalty", self.config.get("repetition_penalty", 1.0))
-        sampling_params = SamplingParams(max_tokens=max_tokens, **sampling_params)
-
-        multi_modal_data = self._build_multi_modal_data(image_data, video_data)
-
-        prompt = {"prompt_token_ids": prompt_ids}
-        if multi_modal_data:
-            prompt["multi_modal_data"] = multi_modal_data
-
-        lora_request = await self._resolve_lora_request()
-
-        generator = self.engine.generate(
-            prompt=prompt,
-            sampling_params=sampling_params,
-            request_id=request_id,
-            lora_request=lora_request,
-            priority=priority,
-        )
-
-        final_res: Optional[OmniRequestOutput] = None
-        async for output in generator:
-            final_res = output
-        if final_res is None:
-            raise RuntimeError("AR mode: vLLM-Omni engine yielded no output for the prompt.")
-
-        req_output = final_res.request_output
-        if req_output is None:
-            raise RuntimeError("AR mode expects request_output with token IDs, but got None.")
-
-        extra_fields = {"global_steps": self.global_steps}
-        token_ids = req_output.outputs[0].token_ids
-        log_probs = None
-        if sampling_params.logprobs is not None:
-            log_probs = [
-                logprobs[token_ids[i]].logprob
-                for i, logprobs in enumerate(req_output.outputs[0].logprobs)
-            ]
-
-        finish_reason = req_output.outputs[0].finish_reason
-        stop_reason = self._map_stop_reason(finish_reason)
-
-        num_preempted = None
-        if hasattr(req_output.outputs[0], "num_preempted"):
-            num_preempted = req_output.outputs[0].num_preempted
-
-        return TokenOutput(
-            token_ids=token_ids,
-            log_probs=log_probs,
-            stop_reason=stop_reason,
-            num_preempted=num_preempted,
-            extra_fields=extra_fields,
-        )
-
     async def wait_for_requests_to_drain(self):
+        # TODO (mike): implement this once DP is supported.
         pass
 
 
@@ -490,8 +485,8 @@ class vLLMOmniReplica(vLLMReplica):
     def __init__(
         self,
         replica_rank: int,
-        config,
-        model_config,
+        config: Union[DiffusionRolloutConfig, RolloutConfig],
+        model_config: Union[DiffusionModelConfig, HFModelConfig],
         gpus_per_node: int = 8,
         is_reward_model: bool = False,
     ):

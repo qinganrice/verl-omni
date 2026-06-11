@@ -11,6 +11,4 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# Importing verl_omni applies all registrations (diffusion model adapters /
-# engines / reward managers) these reward-loop tests rely on.
 import verl_omni  # noqa: F401

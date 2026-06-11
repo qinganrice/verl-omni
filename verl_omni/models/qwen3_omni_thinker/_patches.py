@@ -26,6 +26,11 @@ stays safe to run inside a Ray ``worker_process_setup_hook``.
 """
 
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 # ---------------------------------------------------------------------------
 # Qwen3-Omni Thinker: register with AutoModelForCausalLM and patch the few
 # attributes that block FSDP-init / forward delegation.
@@ -98,6 +103,11 @@ def _register_qwen3_omni_automodel() -> None:
     # tie_word_embeddings=True forces use_meta_tensor=False during FSDP init
     # which OOMs on 30B-A3B. Override at the config-class level via a no-op
     # descriptor so config __init__ assignments are tolerated.
+    logger.warning(
+        "verl_omni: forcing tie_word_embeddings=False on Qwen3OmniMoeConfig — tied "
+        "embeddings disable the FSDP meta-tensor init path and OOM on 30B-A3B."
+    )
+
     class _FalseTieDescriptor:
         def __get__(self, obj, objtype=None):
             return False
