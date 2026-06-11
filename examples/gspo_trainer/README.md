@@ -102,15 +102,11 @@ bash examples/gspo_trainer/run_qwen3_omni_thinker_gspo_lora.sh \
     actor_rollout_ref.actor.optim.lr=2e-6
 ```
 
-To verify the wiring before a full run:
-
-- **Rollout only** — lightweight generate tests under
-  [`tests/workers/rollout/rollout_vllm/`](../../tests/workers/rollout/rollout_vllm/)
-  (tiny randomly-initialized Qwen3-Omni, no 60 GB download).
-- **End-to-end GSPO** — the smoke test
-  [`tests/special_e2e/run_gspo_qwen3_omni_thinker_lora_smoke.sh`](../../tests/special_e2e/run_gspo_qwen3_omni_thinker_lora_smoke.sh),
-  which trains on a dummy model built by
-  [`create_dummy_qwen3_omni.py`](../../tests/special_e2e/create_dummy_qwen3_omni.py).
+To verify the wiring before a full run, use the end-to-end GSPO smoke test
+[`tests/special_e2e/run_gspo_qwen3_omni_thinker_lora_smoke.sh`](../../tests/special_e2e/run_gspo_qwen3_omni_thinker_lora_smoke.sh),
+which trains on a dummy model built by
+[`create_dummy_qwen3_omni.py`](../../tests/special_e2e/create_dummy_qwen3_omni.py)
+(no 60 GB download).
 
 ## Logging
 
