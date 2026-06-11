@@ -9,17 +9,15 @@ For the base environment setup, see the [installation guide](../../docs/start/in
 ## Installation
 
 Follow the [installation guide](../../docs/start/install.md) to set up the base
-environment. This recipe was validated on **vllm 0.21.0** (newer than the
-version pinned in that guide) with `vllm-omni@main`, so install the following
-versions instead:
+environment. This recipe was validated with the following versions:
 
 ```bash
 # vllm + vllm-omni rollout backend
 pip install vllm==0.21.0 --torch-backend=auto
-pip install "vllm-omni @ git+https://github.com/vllm-project/vllm-omni.git@main"
+pip install vllm-omni==0.20.1
 
 # verl (training framework) + verl-omni (this repo)
-pip install "verl @ git+https://github.com/verl-project/verl.git@main"
+pip install verl==0.8.0
 pip install -e .
 ```
 
@@ -31,8 +29,18 @@ python -c "import verl, verl_omni, vllm, vllm_omni; print('OK')"
 
 The provided script is configured for a single node with **4 × H100/H200 80GB**:
 the actor (FSDP, 30B + LoRA r=64 with param/optimizer offload) and the
-`vllm-omni` rollout (TP=4, `gpu_memory_utilization=0.2`) colocate on the same 4
-GPUs. Multi-node is not yet validated.
+`vllm-omni` rollout (TP=4) colocate on the same 4 GPUs. Multi-node is not yet
+validated.
+
+> **Where the rollout engine's memory/batching is set.** When
+> `stage_configs_path` is provided, vLLM-Omni **ignores** the top-level engine
+> args verl passes (`gpu_memory_utilization`, `max_num_seqs`, `load_format`,
+> `dtype`, LoRA, …) — the per-stage YAML takes precedence. So the rollout engine
+> runs with the values in
+> [`qwen3_omni_thinker_only.yaml`](qwen3_omni_thinker_only.yaml)
+> (e.g. `gpu_memory_utilization: 0.4`), kept low because the engine **shares each
+> GPU with the FSDP actor**. To change rollout memory/batching, edit that stage
+> file, not the verl rollout config.
 
 > `vllm>=0.21` pulls `numpy>=2.x` while verl/verl-omni still pin `numpy<2.0.0`;
 > the codepaths used here are numpy-2 compatible, so the pip resolver warning is
@@ -74,7 +82,18 @@ Launch from the repository root:
 bash examples/gspo_trainer/run_qwen3_omni_thinker_gspo_lora.sh
 ```
 
-Override defaults via env vars or extra Hydra args:
+The recipe config lives in
+[`config/qwen3_omni_thinker_gspo.yaml`](config/qwen3_omni_thinker_gspo.yaml),
+which inherits verl's default `ppo_trainer` config and overrides the GSPO/LoRA
+fields. The launch script passes it via `--config-name` and only sets volatile
+values (data/model paths, GPU/node counts, the vLLM-Omni stage config path) on
+the command line. Config precedence, lowest to highest:
+
+```
+verl ppo_trainer defaults  →  config/qwen3_omni_thinker_gspo.yaml  →  CLI overrides
+```
+
+So any field can be overridden from the command line without editing the yaml:
 
 ```bash
 MODEL_PATH=/local/Qwen3-Omni-30B-A3B-Instruct \
@@ -83,9 +102,15 @@ bash examples/gspo_trainer/run_qwen3_omni_thinker_gspo_lora.sh \
     actor_rollout_ref.actor.optim.lr=2e-6
 ```
 
-To verify the wiring quickly before a full run, see the lightweight tests under
-[`tests/workers/rollout/rollout_vllm/`](../../tests/workers/rollout/rollout_vllm/)
-(tiny randomly-initialized Qwen3-Omni, no 60 GB download).
+To verify the wiring before a full run:
+
+- **Rollout only** — lightweight generate tests under
+  [`tests/workers/rollout/rollout_vllm/`](../../tests/workers/rollout/rollout_vllm/)
+  (tiny randomly-initialized Qwen3-Omni, no 60 GB download).
+- **End-to-end GSPO** — the smoke test
+  [`tests/special_e2e/run_gspo_qwen3_omni_thinker_lora_smoke.sh`](../../tests/special_e2e/run_gspo_qwen3_omni_thinker_lora_smoke.sh),
+  which trains on a dummy model built by
+  [`create_dummy_qwen3_omni.py`](../../tests/special_e2e/create_dummy_qwen3_omni.py).
 
 ## Logging
 
@@ -115,11 +140,24 @@ Healthy signals after one full step (~22 min on 4×H100):
   (`actor/perf/max_memory_allocated_gb` < 60).
 - `val-core/.../acc/mean@1` rising with steps.
 
+## Performance
+
+> Measured on a single node of **4 × H100/H200 80GB**, actor and rollout
+> colocated, MATH-lighteval, `dapo` reward.
+
+| Script | Model | Algorithm | # Cards (colocate) | Batch × `rollout.n` | lr | Throughput (tok/gpu/s) | Time / Step (s) | val acc/mean@1 | rollout↔actor pearson |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `run_qwen3_omni_thinker_gspo_lora.sh` | Qwen3-Omni-30B-A3B Thinker | GSPO + LoRA (r=64) | 4 | 8 × 8 = 64 | 1e-6 | 38.2 | ~1350 | 0.90 | 0.993 |
+
+The step time is dominated by rollout generation (~1010 s of ~1350 s) because
+`max_response_length=8192` with `rollout.n=8`; `actor/perf/max_memory_allocated`
+peaks at ~57 GB.
+
 ## Preliminary results
 
-Validation accuracy on MATH-lighteval lands around **0.886** with the default
+Validation accuracy on MATH-lighteval sits around **0.90** with the default
 config. Treat this as a plumbing-correctness signal (finite loss, reasonable
-grad norm, rollout↔actor pearson > 0.99, no OOM) rather than evidence the recipe
+grad norm, rollout↔actor pearson ≈ 0.99, no OOM) rather than evidence the recipe
 is tuned — gains are slow because the Instruct base is already a strong
 zero-shot solver, LoRA r=64 has limited capacity against a 30B base, and the
 binary math reward yields low-variance advantages on a high-baseline policy.
@@ -130,7 +168,9 @@ binary math reward yields low-variance advantages on a high-baseline policy.
 
 ```
 examples/gspo_trainer/
-├── run_qwen3_omni_thinker_gspo_lora.sh   ← launch script
+├── run_qwen3_omni_thinker_gspo_lora.sh   ← launch script (volatile overrides only)
+├── config/
+│   └── qwen3_omni_thinker_gspo.yaml      ← recipe config (inherits verl ppo_trainer)
 ├── qwen3_omni_thinker_only.yaml          ← vllm-omni stage config
 ├── reward.png                            ← preliminary reward curve
 └── README.md                             ← (this file)

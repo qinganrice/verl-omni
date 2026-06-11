@@ -72,8 +72,10 @@ actor_rollout_ref:
     top_p: 0.9
     top_k: -1
     tensor_model_parallel_size: 4
-    gpu_memory_utilization: 0.2
-    max_num_seqs: 32
+    # NOTE: engine memory/batching (gpu_memory_utilization, max_num_seqs, dtype,
+    # load_format, LoRA, ...) is set in the vLLM-Omni stage config
+    # (qwen3_omni_thinker_only.yaml). vLLM-Omni ignores these top-level args when
+    # stage_configs_path is set, so they are intentionally not duplicated here.
     calculate_log_probs: true
     load_format: safetensors
     layered_summon: true
