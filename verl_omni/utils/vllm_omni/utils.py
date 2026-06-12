@@ -35,7 +35,7 @@ from vllm_omni.diffusion.models.diffusers_adapter.pipeline_diffusers_adapter imp
     DiffusersAdapterPipeline,
 )
 from vllm_omni.diffusion.registry import initialize_model
-from verl.utils.vllm.utils import TensorLoRARequest
+from verl.utils.vllm.utils import TensorLoRARequest, VLLMHijack
 
 
 class OmniTensorLoRARequest(TensorLoRARequest):
@@ -49,24 +49,24 @@ class OmniTensorLoRARequest(TensorLoRARequest):
 
 
 class VLLMOmniHijack:
-    """Monkey-patches vllm-omni (diffusion-side) internals to support in-memory LoRA tensors.
+    """Monkey-patches vLLM + vllm-omni internals to support in-memory LoRA tensors.
 
-    This only layers the diffusion-side patches. verl's base vLLM LoRA hijack
-    (``VLLMHijack.hijack()``) is intentionally kept separate and applied by the
-    caller, so the two hijacks stay decoupled.
+    Applies verl's base vLLM LoRA hijack (``VLLMHijack.hijack()``) first, then
+    layers the vllm-omni diffusion-side patches on top, so callers only need a
+    single ``VLLMOmniHijack.hijack()`` call.
     """
 
     _patched = False
 
     @staticmethod
     def hijack():
-        # Diffusion-side (vllm-omni) patches only. verl's base vLLM LoRA hijack
-        # is applied separately by the caller (see vllm_omni_async_server /
-        # the rollout worker extension).
         # Idempotency guard: hijack() runs on every worker __new__; only patch once.
         if VLLMOmniHijack._patched:
             return
         VLLMOmniHijack._patched = True
+
+        # verl's base vLLM LoRA hijack first, then the vllm-omni diffusion patches.
+        VLLMHijack.hijack()
 
         def hijack__load_adapter(self, lora_request: OmniTensorLoRARequest) -> tuple[LoRAModel, PEFTHelper]:
             """

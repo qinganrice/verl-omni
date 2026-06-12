@@ -167,12 +167,10 @@ class vLLMOmniHttpServer(vLLMHttpServer):
         os.environ["MASTER_PORT"] = str(diffusion_master_port)
         logger.info("Using MASTER_PORT=%s for vLLM-Omni diffusion workers", os.environ["MASTER_PORT"])
 
-        # Apply hijacks before AsyncOmni builds OmniDiffusionConfig: verl's base
-        # vLLM LoRA hijack first, then the vllm-omni diffusion-side patches.
-        from verl.utils.vllm import VLLMHijack
+        # Apply hijacks before AsyncOmni builds OmniDiffusionConfig. VLLMOmniHijack
+        # applies verl's base vLLM LoRA hijack first, then the vllm-omni patches.
         from verl_omni.utils.vllm_omni import VLLMOmniHijack
 
-        VLLMHijack.hijack()
         VLLMOmniHijack.hijack()
 
         engine_client = AsyncOmni(**engine_args)

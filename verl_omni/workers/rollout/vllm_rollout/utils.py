@@ -16,7 +16,6 @@ import os
 
 import torch
 from verl.workers.rollout.vllm_rollout.utils import VLLM_LORA_INT_ID, VLLM_LORA_NAME, VLLM_LORA_PATH, set_death_signal
-from verl.utils.vllm import VLLMHijack
 from vllm_omni.diffusion.worker.diffusion_worker import CustomPipelineWorkerExtension
 
 from verl_omni.utils.vllm_omni import OmniTensorLoRARequest, VLLMOmniHijack
@@ -65,8 +64,8 @@ class vLLMOmniColocateWorkerExtension(*_platform_extension_bases()):
     def __new__(cls, **kwargs):
         set_death_signal()
 
-        # 1. patch for Lora: verl's base vLLM LoRA hijack first, then vllm-omni diffusion patches
-        VLLMHijack.hijack()
+        # 1. patch for Lora: VLLMOmniHijack applies verl's base vLLM LoRA hijack
+        #    first, then the vllm-omni diffusion patches.
         VLLMOmniHijack.hijack()
 
         return super().__new__(cls)
