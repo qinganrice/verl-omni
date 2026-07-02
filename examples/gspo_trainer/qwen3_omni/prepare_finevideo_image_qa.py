@@ -73,31 +73,68 @@ def _get_mp4_bytes(sample):
     return None
 
 
-def _sample_frames(mp4_bytes, num_frames, size):
-    """Uniformly sample num_frames PIL images from the mp4 bytes via decord."""
-    from decord import VideoReader
+def _encode(pil_img, size):
+    from PIL import Image  # noqa: F401
 
+    img = pil_img.convert("RGB")
+    img.thumbnail((size, size))
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=90)
+    return {"bytes": buf.getvalue()}
+
+
+def _sample_frames_decord(mp4_path, num_frames, size):
+    from decord import VideoReader
+    import numpy as np
+    from PIL import Image
+
+    vr = VideoReader(mp4_path)
+    n = len(vr)
+    if n == 0:
+        return None
+    idxs = np.linspace(0, n - 1, num_frames).round().astype(int).tolist()
+    arr = vr.get_batch(idxs).asnumpy()
+    return [_encode(Image.fromarray(f), size) for f in arr]
+
+
+def _sample_frames_av(mp4_path, num_frames, size):
+    import av
+
+    with av.open(mp4_path) as container:
+        stream = container.streams.video[0]
+        total = stream.frames or 0
+        if total <= 0:  # some encodings don't report frame count; decode-and-collect
+            frames = [f.to_image() for f in container.decode(video=0)]
+            if not frames:
+                return None
+            import numpy as np
+
+            idxs = np.linspace(0, len(frames) - 1, num_frames).round().astype(int).tolist()
+            return [_encode(frames[i], size) for i in idxs]
+        import numpy as np
+
+        want = set(np.linspace(0, total - 1, num_frames).round().astype(int).tolist())
+        out = []
+        for i, frame in enumerate(container.decode(video=0)):
+            if i in want:
+                out.append(_encode(frame.to_image(), size))
+            if len(out) == num_frames:
+                break
+        return out or None
+
+
+def _sample_frames(mp4_bytes, num_frames, size):
+    """Uniformly sample num_frames PIL images from mp4 bytes (decord, else PyAV)."""
     with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
         tmp.write(mp4_bytes)
         tmp_path = tmp.name
     try:
-        vr = VideoReader(tmp_path)
-        n = len(vr)
-        if n == 0:
-            return None
-        import numpy as np
-        from PIL import Image
+        try:
+            import decord  # noqa: F401
 
-        idxs = np.linspace(0, n - 1, num_frames).round().astype(int).tolist()
-        arr = vr.get_batch(idxs).asnumpy()  # (num_frames, H, W, 3)
-        frames = []
-        for f in arr:
-            img = Image.fromarray(f).convert("RGB")
-            img.thumbnail((size, size))
-            buf = io.BytesIO()
-            img.save(buf, format="JPEG", quality=90)
-            frames.append({"bytes": buf.getvalue()})
-        return frames
+            return _sample_frames_decord(tmp_path, num_frames, size)
+        except ImportError:
+            return _sample_frames_av(tmp_path, num_frames, size)
     finally:
         os.unlink(tmp_path)
 
