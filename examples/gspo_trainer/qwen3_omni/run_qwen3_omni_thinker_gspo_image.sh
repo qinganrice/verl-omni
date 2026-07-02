@@ -30,8 +30,8 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.model.external_lib=verl_omni.models.transformers.qwen3_omni_thinker \
     ++actor_rollout_ref.rollout.engine_kwargs.vllm_omni.stage_configs_path="${STAGE_CONFIG}" \
     reward.reward_manager.name=naive \
-    custom_reward_function.path="${REWARD_FN}" \
-    custom_reward_function.name=compute_score \
+    reward.custom_reward_function.path="${REWARD_FN}" \
+    reward.custom_reward_function.name=compute_score \
     trainer.experiment_name=gspo_lora_finevideo_image \
     trainer.n_gpus_per_node=4 \
     trainer.nnodes=1 \
