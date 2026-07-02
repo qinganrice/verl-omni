@@ -137,12 +137,13 @@ def patch_hf_processor_for_qwen3_omni() -> None:
             return None
 
     _vt.hf_processor = _patched_hf_processor
-    # Also refresh verl.utils's stale re-export (callers use `from verl.utils import hf_processor`).
+    # Refresh stale `from verl.utils import hf_processor` snapshots (V1 builds the dataset processor in trainer_base).
     import sys as _sys
 
-    _utils_mod = _sys.modules.get("verl.utils")
-    if _utils_mod is not None and hasattr(_utils_mod, "hf_processor"):
-        _utils_mod.hf_processor = _patched_hf_processor
+    for _name in ("verl.utils", "verl.trainer.ppo.v1.trainer_base", "verl.workers.config.model"):
+        _mod = _sys.modules.get(_name)
+        if _mod is not None and hasattr(_mod, "hf_processor"):
+            _mod.hf_processor = _patched_hf_processor
 
 
 _EXPERTS_UNFUSE_APPLIED = False
