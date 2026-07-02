@@ -1,0 +1,53 @@
+# Thinker-only stage config for Qwen3-Omni RL — IMAGE-input variant (phase 1).
+#
+# Same as qwen3_omni_thinker_only.yaml, plus limit_mm_per_prompt so the vLLM-Omni
+# engine accepts the sampled video frames (top-level CLI mm args are stripped when
+# a stage config is set, so this must live here).
+#
+# Adjust `devices` and `tensor_parallel_size` to match your GPU count.
+stage_args:
+  - stage_id: 0
+    runtime:
+      devices: "0,1,2,3"
+    engine_args:
+      # ── Stage identity ──
+      model_stage: thinker
+      model_arch: Qwen3OmniMoeThinkerForConditionalGeneration
+      worker_type: ar
+      scheduler_cls: vllm_omni.core.sched.omni_ar_scheduler.OmniARScheduler
+      engine_output_type: text
+      hf_config_name: thinker_config
+
+      # ── Parallelism & backend ──
+      tensor_parallel_size: 4
+      distributed_executor_backend: "mp"
+
+      # ── Memory & batching (critical: top-level CLI args are stripped) ──
+      gpu_memory_utilization: 0.4
+      max_num_seqs: 64
+      max_num_batched_tokens: 32768
+      enable_chunked_prefill: true
+
+      # ── Multimodal: allow up to 4 sampled frames per prompt ──
+      limit_mm_per_prompt:
+        image: 4
+
+      # ── Model loading ──
+      dtype: bfloat16
+      load_format: safetensors
+      trust_remote_code: true
+      enable_prefix_caching: false
+      enforce_eager: true
+
+      # ── LoRA (required for adapter hot-loading) ──
+      enable_lora: true
+      max_lora_rank: 64
+      max_loras: 1
+
+      # ── verl integration ──
+      enable_sleep_mode: true
+      logprobs_mode: processed_logprobs
+      disable_log_stats: true
+    final_output: true
+    final_output_type: text
+    is_comprehension: true
