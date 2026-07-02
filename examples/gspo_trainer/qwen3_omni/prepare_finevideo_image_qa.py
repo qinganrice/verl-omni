@@ -139,10 +139,10 @@ def _sample_frames(mp4_bytes, num_frames, size):
         os.unlink(tmp_path)
 
 
-def _build_prompt(num_frames, label, distractors):
-    options = [label] + distractors
-    random.shuffle(options)
-    correct_idx = options.index(label)
+def _build_prompt(num_frames, label, distractors, correct_pos):
+    """Place the correct label at correct_pos (balanced across ABCD), distractors elsewhere."""
+    options = list(distractors)
+    options.insert(correct_pos, label)
     placeholders = "".join("<image>\n" for _ in range(num_frames))
     opt_lines = "\n".join(f"{LETTERS[i]}) {opt}" for i, opt in enumerate(options))
     question = (
@@ -151,7 +151,7 @@ def _build_prompt(num_frames, label, distractors):
         f"{opt_lines}\n"
         "Answer with the letter only."
     )
-    return [{"role": "user", "content": question}], LETTERS[correct_idx]
+    return [{"role": "user", "content": question}], LETTERS[correct_pos]
 
 
 def main():
@@ -217,7 +217,7 @@ def main():
     for i, b in enumerate(buffered):
         pool = [c for c in vocab if c != b["label"]]
         distractors = random.sample(pool, len(LETTERS) - 1)
-        prompt, gt = _build_prompt(args.num_frames, b["label"], distractors)
+        prompt, gt = _build_prompt(args.num_frames, b["label"], distractors, i % len(LETTERS))
         rows.append(
             {
                 "data_source": "HuggingFaceFV/finevideo",
